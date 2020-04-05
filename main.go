@@ -56,22 +56,24 @@ func cpuBcrypt() {
 
 	for p := 0; p < parallel; p++ {
 		go func() {
+
 			runtime.Gosched()
+
 			for i := 0; i <= 1; i++ {
-				// fmt.Printf(".")
+				fmt.Printf(".")
 				rand.Seed(time.Now().UnixNano())
 				i = rand.Int()
 				s := fmt.Sprintf("%v", i)
 				bs := []byte(s)
 
-				_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MinCost)
+				_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MaxCost)
 				if err != nil {
 					fmt.Println("bcrypt.GenerateFromPassword:", err)
 					os.Exit(1)
 				}
 
 				i = 0
-				// fmt.Printf("+")
+				fmt.Printf("+")
 			}
 			wg.Done()
 		}()
@@ -79,24 +81,25 @@ func cpuBcrypt() {
 	wg.Wait()
 }
 
-// func cpuBcrypt() {
-// 	// defer bye()
-//
-// 	for i := 0; i <= 1; i++ {
-// 		rand.Seed(time.Now().UnixNano())
-// 		i = rand.Int()
-// 		s := fmt.Sprintf("%v", i)
-// 		bs := []byte(s)
-//
-// 		_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MaxCost)
-// 		if err != nil {
-// 			fmt.Println("bcrypt.GenerateFromPassword:", err)
-// 			os.Exit(1)
-// 		}
-//
-// 		i = 0
-// 	}
-// }
+// OLD func cpuBcrypt, no concurrency. Not in use.
+func cpuBcryptOLD() {
+	// defer bye()
+
+	for i := 0; i <= 1; i++ {
+		rand.Seed(time.Now().UnixNano())
+		i = rand.Int()
+		s := fmt.Sprintf("%v", i)
+		bs := []byte(s)
+
+		_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MaxCost)
+		if err != nil {
+			fmt.Println("bcrypt.GenerateFromPassword:", err)
+			os.Exit(1)
+		}
+
+		i = 0
+	}
+}
 
 // func bye() {
 // 	fmt.Println("Bye.")

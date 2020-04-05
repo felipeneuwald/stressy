@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
+	// "flag"
+
 	"golang.org/x/crypto/bcrypt"
-	// "golang.org/x/crypto/bcrypt"
 )
 
-// "flag"
+const parallel = 2
 
 func main() {
 	// cpuTest := flag.String("cpu", "bcrypt", "type of CPU test")
@@ -24,6 +27,16 @@ func main() {
 	// fmt.Println(threads, *threads)
 	// fmt.Println(flag.Args())
 
+	// // it works. have to study, understand that and see why it should be used.
+	// c := make(chan os.Signal, 1)
+	// signal.Notify(c, os.Interrupt)
+	// go func() {
+	// 	for sig := range c {
+	// 		fmt.Println("^C, Bye.", sig)
+	// 		os.Exit(1)
+	// 	}
+	// }()
+
 	cpuBcrypt()
 	// cpuLoop()
 
@@ -36,18 +49,55 @@ func cpuLoop() {
 }
 
 func cpuBcrypt() {
-	for i := 0; i <= 1; i++ {
-		rand.Seed(time.Now().UnixNano())
-		i = rand.Int()
-		s := fmt.Sprintf("%v", i)
-		bs := []byte(s)
+	// defer bye()
 
-		_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MaxCost)
-		if err != nil {
-			fmt.Println("bcrypt.GenerateFromPassword:", err)
-			os.Exit(1)
-		}
+	var wg sync.WaitGroup
+	wg.Add(parallel)
 
-		i = 0
+	for p := 0; p < parallel; p++ {
+		go func() {
+			runtime.Gosched()
+			for i := 0; i <= 1; i++ {
+				// fmt.Printf(".")
+				rand.Seed(time.Now().UnixNano())
+				i = rand.Int()
+				s := fmt.Sprintf("%v", i)
+				bs := []byte(s)
+
+				_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MinCost)
+				if err != nil {
+					fmt.Println("bcrypt.GenerateFromPassword:", err)
+					os.Exit(1)
+				}
+
+				i = 0
+				// fmt.Printf("+")
+			}
+			wg.Done()
+		}()
 	}
+	wg.Wait()
 }
+
+// func cpuBcrypt() {
+// 	// defer bye()
+//
+// 	for i := 0; i <= 1; i++ {
+// 		rand.Seed(time.Now().UnixNano())
+// 		i = rand.Int()
+// 		s := fmt.Sprintf("%v", i)
+// 		bs := []byte(s)
+//
+// 		_, err := bcrypt.GenerateFromPassword(bs, bcrypt.MaxCost)
+// 		if err != nil {
+// 			fmt.Println("bcrypt.GenerateFromPassword:", err)
+// 			os.Exit(1)
+// 		}
+//
+// 		i = 0
+// 	}
+// }
+
+// func bye() {
+// 	fmt.Println("Bye.")
+// }

@@ -16,7 +16,7 @@ var parallelism int
 var executionTime int
 
 func init() {
-	flag.IntVar(&parallelism, "parallelism", 1, "Number of parallel resource operations")
+	flag.IntVar(&parallelism, "parallelism", 1, "Number of parallel operations")
 	flag.IntVar(&executionTime, "time", 86400, "Number of seconds to run")
 	flag.Parse()
 }

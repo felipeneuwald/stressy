@@ -1,5 +1,5 @@
 # stressy
-A simple stress test tool
+A simple CPU stress test tool
 
 ```
 $ stressy -help

@@ -15,7 +15,7 @@ Where:
 - -p: Qty of parallel CPU stress tests (default 1)
 - -t: Test execution time (seconds); If not specified will run indefinitely
 
-### Docker & Kubernetes
+### Docker
 For the use cases where it is needed to run CPU stress tests in a containerized system, stressy provides a docker image.
 
 ```

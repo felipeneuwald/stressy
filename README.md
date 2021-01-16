@@ -16,7 +16,7 @@ Where:
 - -t: Test execution time (seconds); If not specified will run indefinitely
 
 ### Docker
-For the use cases where it is needed to run CPU stress tests in a containerized system, stressy provides a docker image.
+For the use cases where it is needed to run CPU stress tests in a containerized system, stressy provides a [docker image](https://hub.docker.com/r/felipeneuwald/stressy).
 
 ```
 docker run felipeneuwald/stressy ./stressy_linux -p 8 -t 1800

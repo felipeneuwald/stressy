@@ -25,7 +25,7 @@ docker run felipeneuwald/stressy ./stressy_linux -p 8 -t 1800
 In the example above, stressy runs 8 parallel CPU tests for 1800 seconds (30 minutes).
 
 ### Kubernetes
-Stressy can run in a Kubernetes cluster for application performance tests.
+stressy can run in a Kubernetes cluster for application performance tests.
 
 The example below shows how to create a Kubernetes job that will run stressy for 86400 seconds (24 hours): 
 

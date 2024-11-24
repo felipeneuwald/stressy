@@ -7,45 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Upgraded to Go 1.23.3
-- Updated golang.org/x/crypto dependency
-- Removed binary files from git repository
-- Added GoReleaser for automated releases
-- Added GitHub Actions workflow for automated builds
-
-## [2.0.1] - 2021-01-17
-
-### Security
-- Updated dependencies to fix vulnerabilities
-
-### Changed
-- Upgraded Go version
-
-## [2.0.0] - 2021-01-12
-
+## [0.2.0] - 2024-11-24
 ### Added
-- Docker support
-- Makefile for easier build management
-- Go modules support
+- Multi-platform Docker image support via GoReleaser
+- Automated GitHub Actions workflow for releases
+- Docker images for AMD64 and ARM64 architectures
 
 ### Changed
-- Major refactoring of the codebase
-- Updated documentation
-- Improved build process
+- Updated project to use Go 1.23
+- Updated Dockerfile to use Alpine 3.19
+- Improved build and release process with GoReleaser
+- Updated golang.org/x/crypto dependency to latest version
 
-### Removed
-- Vendor directory
-
-## [1.0.0] - 2020
-
+## [0.1.0] - 2020-03-22
 ### Added
 - Initial release
-- CPU stress testing with simple loop & bcrypt
-- Goroutine support
-- Basic documentation
+- Basic CPU stress testing functionality
+- Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v2.0.1...HEAD
-[2.0.1]: https://github.com/felipeneuwald/stressy/compare/v2.0.0...v2.0.1
-[2.0.0]: https://github.com/felipeneuwald/stressy/compare/v1.0.0...v2.0.0
-[1.0.0]: https://github.com/felipeneuwald/stressy/releases/tag/v1.0.0
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/felipeneuwald/stressy/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/felipeneuwald/stressy/releases/tag/v0.1.0

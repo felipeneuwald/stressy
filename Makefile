@@ -15,6 +15,14 @@ docker_build:
 docker_push:
 	docker push $(DOCKERHUB_USER)/$(DOCKERHUB_REPO)
 
+## release: create a new release using goreleaser
+release:
+	goreleaser release --clean
+
+## release-snapshot: test the release process without publishing
+release-snapshot:
+	goreleaser release --snapshot --clean --skip-publish
+
 help: Makefile
 	@echo " Choose a command to run in "$(PROJECTNAME)":"
 	@echo

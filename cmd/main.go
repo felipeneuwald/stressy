@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/felipeneuwald/stressy/internal/flag"
@@ -10,16 +12,15 @@ import (
 )
 
 var (
-	version string = "0.0.0"
+	version = "0.0.0"
 	c       stressy.Cfg
 	cmd     = &cobra.Command{
 		Use:   "stressy",
-		Short: "Stressy is simple a tool to perform CPU stress tests.",
-		Long: `Stressy is simple a tool to perform CPU stress tests.
+		Short: "Stressy is a simple tool to perform CPU stress tests",
+		Long: `Stressy is a simple tool to perform CPU stress tests.
 
 All flags can be configured using environment variables with the STRESSY_ prefix. 
-For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=60. 
-Environment variables use underscores instead of hyphens in flag names.`,
+For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=60.`,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Version:           version,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -34,9 +35,9 @@ Environment variables use underscores instead of hyphens in flag names.`,
 
 			return nil
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			s := stressy.New(c)
-			s.Run()
+			return s.Run()
 		},
 	}
 	cobraFlags = []interface{}{
@@ -51,7 +52,7 @@ Environment variables use underscores instead of hyphens in flag names.`,
 			Pointer:          &c.Timeout,
 			FlagName:         "timeout",
 			FlagShortHand:    "t",
-			FlagDefaultValue: 1,
+			FlagDefaultValue: 0,
 			FlagUsage:        "timeout in seconds for the CPU stress test",
 		},
 	}
@@ -59,8 +60,11 @@ Environment variables use underscores instead of hyphens in flag names.`,
 
 func main() {
 	if err := flag.Load(cmd, cobraFlags); err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "Error loading flags: %v\n", err)
+		os.Exit(1)
 	}
 
-	cmd.Execute() // if err?
+	if err := cmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

@@ -25,11 +25,8 @@ import (
 //
 // Returns an error if either cmd or v is nil.
 func Bind(cmd *cobra.Command, v *viper.Viper) error {
-	if cmd == nil {
-		return fmt.Errorf("cmd cannot be nil")
-	}
-	if v == nil {
-		return fmt.Errorf("viper instance cannot be nil")
+	if cmd == nil || v == nil {
+		return fmt.Errorf("cmd or v is nil")
 	}
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {

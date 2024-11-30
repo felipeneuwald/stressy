@@ -3,9 +3,9 @@ package flag
 import (
 	"fmt"
 
-	"github.com/felipeneuwald/stressy/internal/ptr"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"k8s.io/utils/ptr"
 )
 
 // flagValidate represents a flag validation configuration.
@@ -61,7 +61,7 @@ func Validate(cmd *cobra.Command, flags []interface{}) error {
 				})
 
 			default:
-				unsupportedFlagType = ptr.StrPtr(fmt.Sprintf("%T", v))
+				unsupportedFlagType = ptr.To(fmt.Sprintf("%T", v))
 			}
 		}
 	})

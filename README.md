@@ -1,38 +1,80 @@
 # stressy
-stressy is a simple CPU stress test tool.
 
-It is written in Go and has amd64 [binaries](bin/) for [Linux](bin/stressy_linux), [Mac OS](bin/stressy_darwin), [FreeBSD](bin/stressy_freebsd), [NetBSD](bin/stressy_netbsd), and [OpenBSD](bin/stressy_openbsd).
+stressy is a simple CPU stress test tool written in Go. It allows you to stress test your CPU cores by running intensive computations.
+
+## Features
+
+- Simple and lightweight CPU stress testing
+- Configurable number of CPU cores to stress
+- Available as both binary and Docker container
+- Cross-platform support (Linux, macOS, Windows)
+- Multi-architecture support (AMD64, ARM64)
+
+## Installation
+
+### Using Go
+
+```bash
+go install github.com/felipeneuwald/stressy@latest
+```
+
+### Using Docker
+
+```bash
+# AMD64
+docker pull ghcr.io/felipeneuwald/stressy:latest-amd64
+
+# ARM64
+docker pull ghcr.io/felipeneuwald/stressy:latest-arm64
+
+# Multi-arch (automatically selects the right architecture)
+docker pull ghcr.io/felipeneuwald/stressy:latest
+```
+
+### Binary Releases
+
+Download the latest binary for your platform from the [releases page](https://github.com/felipeneuwald/stressy/releases).
 
 ## Usage
 
-### CLI
+### Binary
 
-```
-./stressy -p 2 -t 300
-```
+```bash
+# Stress test all CPU cores
+stressy
 
-Where:
-- -p: Qty of parallel CPU stress tests (default 1)
-- -t: Test execution time (seconds); If not specified will run indefinitely
+# Stress test specific number of cores
+stressy -c 2  # Stress 2 CPU cores
+```
 
 ### Docker
-For the use cases where it is needed to run CPU stress tests in a containerized system, stressy provides a [docker image](https://hub.docker.com/r/felipeneuwald/stressy).
 
+```bash
+# Stress test all CPU cores
+docker run ghcr.io/felipeneuwald/stressy:latest
+
+# Stress test specific number of cores
+docker run ghcr.io/felipeneuwald/stressy:latest -c 2
 ```
-docker run felipeneuwald/stressy ./stressy_linux -p 8 -t 1800
-```
 
-In the example above, stressy runs 8 parallel CPU tests for 1800 seconds (30 minutes).
+## Building from Source
 
-### Kubernetes
-stressy can run in a Kubernetes cluster for application performance tests.
+```bash
+# Clone the repository
+git clone https://github.com/felipeneuwald/stressy.git
+cd stressy
 
-The example below shows how to create a Kubernetes job that will run stressy for 86400 seconds (24 hours): 
+# Build
+make build
 
-```
-kubectl create job stressy --image=felipeneuwald/stressy -- ./stressy_linux -t 86400
+# Run tests
+make test
 ```
 
 ## License
 
-See [LICENSE](LICENSE).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

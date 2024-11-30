@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2024-11-30
+### Added
+- Comprehensive code documentation
+- Validation for configuration parameters
+- Informative startup messages showing test configuration
+
+### Changed
+- Improved error handling and validation messages
+- Simplified build process by removing Makefile
+- Enhanced CLI help messages and documentation
+- Allow indefinite stress testing with timeout=0
+- Refactored flag package for better type safety and validation
+
+### Fixed
+- Workers validation to require 1 or more workers
+- Timeout validation to allow 0 (indefinite) or greater values
+
 ## [0.2.0] - 2024-11-24
 ### Added
 - Multi-platform Docker image support via GoReleaser
@@ -25,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic CPU stress testing functionality
 - Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/felipeneuwald/stressy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/felipeneuwald/stressy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/felipeneuwald/stressy/releases/tag/v0.1.0

@@ -1,13 +1,15 @@
 # stressy
 
-stressy is a simple CPU stress test tool written in Go. It allows you to stress test your CPU cores by running intensive computations.
+stressy is a simple CPU stress test tool written in Go. It allows you to stress test your CPU cores by running intensive cryptographic computations.
 
 ## Features
 
 - Simple and lightweight CPU stress testing
-- Configurable number of CPU cores to stress
+- Configurable number of parallel workers
+- Configurable test duration with support for indefinite testing
+- Environment variable configuration support
 - Available as both binary and Docker container
-- Cross-platform support (Linux, macOS, Windows)
+- Cross-platform support (Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD)
 - Multi-architecture support (AMD64, ARM64)
 
 ## Installation
@@ -37,25 +39,48 @@ Download the latest binary for your platform from the [releases page](https://gi
 
 ## Usage
 
-### Binary
-
 ```bash
-# Stress test all CPU cores
+# Start stress test with default settings (1 worker)
 stressy
 
-# Stress test specific number of cores
-stressy -c 2  # Stress 2 CPU cores
+# Use 4 parallel workers
+stressy -w 4
+# or
+stressy --workers 4
+
+# Run for 60 seconds
+stressy -t 60
+# or
+stressy --timeout 60
+
+# Combine workers and timeout
+stressy -w 4 -t 60
+
+# Using environment variables
+export STRESSY_WORKERS=4
+export STRESSY_TIMEOUT=60
+stressy
 ```
 
 ### Docker
 
 ```bash
-# Stress test all CPU cores
+# Start stress test with default settings
 docker run ghcr.io/felipeneuwald/stressy:latest
 
-# Stress test specific number of cores
-docker run ghcr.io/felipeneuwald/stressy:latest -c 2
+# Use 4 parallel workers for 60 seconds
+docker run ghcr.io/felipeneuwald/stressy:latest -w 4 -t 60
+
+# Using environment variables
+docker run -e STRESSY_WORKERS=4 -e STRESSY_TIMEOUT=60 ghcr.io/felipeneuwald/stressy:latest
 ```
+
+### Available Flags
+
+- `-w, --workers`: Number of parallel workers (must be 1 or greater)
+- `-t, --timeout`: Test duration in seconds (0 for indefinite, must be 0 or greater)
+- `-h, --help`: Show help information
+- `-v, --version`: Show version information
 
 ## Building from Source
 
@@ -64,11 +89,9 @@ docker run ghcr.io/felipeneuwald/stressy:latest -c 2
 git clone https://github.com/felipeneuwald/stressy.git
 cd stressy
 
-# Build
-make build
-
-# Run tests
-make test
+# Build and run
+go build ./cmd
+./stressy
 ```
 
 ## License

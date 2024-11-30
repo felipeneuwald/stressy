@@ -31,6 +31,18 @@ func New(c Cfg) *Stressy {
 }
 
 func (s *Stressy) Run() error {
+	if err := s.validateConfig(); err != nil {
+		return err
+	}
+
+	fmt.Printf("Starting CPU stress test with %d workers", s.workers)
+	if s.timeout > 0 {
+		fmt.Printf(" for %d seconds\n", s.timeout)
+	} else {
+		fmt.Printf(" indefinitely\n")
+	}
+	fmt.Printf("Use --help for additional information\n")
+
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -57,6 +69,18 @@ func (s *Stressy) Run() error {
 	return nil
 }
 
+func (s *Stressy) validateConfig() error {
+	if s.workers < 1 {
+		return fmt.Errorf("workers must be 1 or greater")
+	}
+
+	if s.timeout < 0 {
+		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
+	}
+
+	return nil
+}
+
 func (s *Stressy) timer() {
 	timer := time.NewTimer(time.Duration(s.timeout) * time.Second)
 	<-timer.C
@@ -73,7 +97,6 @@ func (s *Stressy) stressTestCPU() {
 			if err != nil {
 				panic(err)
 			}
-			fmt.Printf(".")
 		}
 	}
 }

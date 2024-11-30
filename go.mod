@@ -7,6 +7,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.19.0
 	golang.org/x/crypto v0.29.0
+	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078
 )
 
 require (

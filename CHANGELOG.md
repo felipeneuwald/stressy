@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2024-12-12
+### Security
+- Updated golang.org/x/crypto from v0.29.0 to v0.31.0 to address vulnerability GO-2024-3321
+
 ## [0.3.0] - 2024-11-30
 ### Added
 - Comprehensive code documentation
@@ -42,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic CPU stress testing functionality
 - Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/felipeneuwald/stressy/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/felipeneuwald/stressy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/felipeneuwald/stressy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/felipeneuwald/stressy/releases/tag/v0.1.0

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-02-09
+### Security
+- Updated Go version from 1.23.3 to 1.23.6 to address vulnerabilities GO-2025-3447 (timing sidechannel in P-256) and GO-2025-3373 (IPv6 zone ID URI constraints bypass)
+
 ## [0.3.1] - 2024-12-12
 ### Security
 - Updated golang.org/x/crypto from v0.29.0 to v0.31.0 to address vulnerability GO-2024-3321

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-01-06
+### Security
+- Updated golang.org/x/crypto from v0.31.0 to v0.46.0 to address vulnerabilities:
+  - CVE-2025-22869: DoS via slow or incomplete SSH key exchange (high severity)
+  - CVE-2025-58181: Unbounded memory consumption in SSH (medium severity)
+  - CVE-2025-47914: Panic on malformed SSH agent message (medium severity)
+
 ## [0.3.2] - 2025-02-09
 ### Security
 - Updated Go version from 1.23.3 to 1.23.6 to address vulnerabilities GO-2025-3447 (timing sidechannel in P-256) and GO-2025-3373 (IPv6 zone ID URI constraints bypass)
@@ -50,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic CPU stress testing functionality
 - Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/felipeneuwald/stressy/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/felipeneuwald/stressy/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/felipeneuwald/stressy/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/felipeneuwald/stressy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/felipeneuwald/stressy/compare/v0.1.0...v0.2.0

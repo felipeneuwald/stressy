@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Release and vulnerability scan workflows now build with the latest stable Go instead of pinning 1.23.6, a pin that never took effect
 - Raised the go.mod Go directive to 1.26, which enables the cgroup-aware `GOMAXPROCS` default so containerised runs respect their CPU limit instead of sizing to the host
+- Updated cobra 1.8.1 to 1.10.2, pflag 1.0.5 to 1.0.10, viper 1.19.0 to 1.21.0 and golang.org/x/crypto 0.46.0 to 0.54.0 — the first updates to arrive on their own rather than after someone noticed an advisory. Nothing a user touches changed: help text, version output, unknown-flag errors and invalid-value errors are byte-identical across the bump. Nor is this a security update in disguise; every x/crypto advisory fixed in that range is in `ssh`, and the only package this project imports is `bcrypt`, whose source is identical in both versions
+- Release binaries are roughly a third smaller, 7.2 MB down to 4.8 MB when built with the release `-s -w` flags, because cobra 1.9 lets the linker drop `text/template` for commands that use the default help templates
+- Six indirect dependencies dropped, 18 down to 12: viper 1.21 no longer pulls in the HCL, Java-properties and INI config decoders, `slog-shim`, `multierr` or `golang.org/x/exp`, and it moved `mapstructure` and YAML onto maintained forks. None of those decoders were ever reachable here — viper reads `STRESSY_WORKERS` and `STRESSY_TIMEOUT` from the environment and never opens a config file
 
 ### Removed
 - The nightly vulnerability scan workflow. GitHub disables schedule-triggered workflows in public repositories after 60 days of inactivity, which had already happened, so it had been reporting nothing for months while appearing healthy. govulncheck now runs in CI on every push and pull request instead
@@ -22,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A malformed environment variable (for example `STRESSY_TIMEOUT=abc`) was silently discarded, leaving the flag at zero and turning a bounded run into an indefinite one that exited 0; it is now rejected with a message naming the flag and the value
 - gofmt formatting in `internal/flag/load.go` and `internal/stressy/stressy.go`
+
+### Security
+- Updated the Docker base image from Alpine 3.19 to 3.24. Alpine 3.19 left support on 2025-11-01, so published `ghcr.io/felipeneuwald/stressy` images had been carrying a base layer that no longer received security fixes, and scanners flag an end-of-life release on its own regardless of which CVEs sit in it. The binary is static and was never affected — this is entirely about the rest of the image
 
 ## [0.3.3] - 2026-01-06
 ### Security

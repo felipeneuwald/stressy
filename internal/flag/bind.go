@@ -23,18 +23,33 @@ import (
 // This enables a priority order where command-line flags take precedence over
 // configuration values from viper (environment variables or config files).
 //
-// Returns an error if either cmd or v is nil.
+// Returns an error if either cmd or v is nil, or if a configured value cannot
+// be parsed into its flag's type.
 func Bind(cmd *cobra.Command, v *viper.Viper) error {
 	if cmd == nil || v == nil {
 		return fmt.Errorf("cmd or v is nil")
 	}
 
+	// VisitAll has no early exit, so record the first failure and skip the
+	// remaining flags rather than reporting the last one.
+	var err error
+
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if err != nil {
+			return
+		}
+
 		if !f.Changed && v.IsSet(f.Name) {
 			val := v.Get(f.Name)
-			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
+
+			// pflag writes the zero value before returning a parse error, so
+			// discarding this would leave the flag at 0 and look like a
+			// deliberate default — turning a bounded run into an endless one.
+			if setErr := cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val)); setErr != nil {
+				err = fmt.Errorf("invalid configured value for --%v: %w", f.Name, setErr)
+			}
 		}
 	})
 
-	return nil
+	return err
 }

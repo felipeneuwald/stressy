@@ -5,10 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/felipeneuwald/stressy/internal/flag"
-	"github.com/felipeneuwald/stressy/internal/stressy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/felipeneuwald/stressy/internal/flag"
+	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
 var (
@@ -19,44 +20,58 @@ var (
 		Short: "Stressy is a simple tool to perform CPU stress tests",
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
-All flags can be configured using environment variables with the STRESSY_ prefix. 
+All flags can be configured using environment variables with the STRESSY_ prefix.
 For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=60.`,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Version:           version,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			v := viper.New()
-			v.SetEnvPrefix("STRESSY")
-			v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-			v.AutomaticEnv()
-			flag.Bind(cmd, v)
-			if err := flag.Validate(cmd, cobraFlags); err != nil {
-				return err
-			}
-
-			return nil
+			return bindAndValidate(cmd, cobraFlags)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s := stressy.New(c)
 			return s.Run()
 		},
 	}
-	cobraFlags = []interface{}{
+	cobraFlags = newFlags(&c)
+)
+
+// newFlags returns the command-line flag definitions, bound to the given
+// configuration. It is a constructor rather than a literal so that tests can
+// build an independent command over the same definitions.
+func newFlags(cfg *stressy.Cfg) []interface{} {
+	return []interface{}{
 		flag.Int{
-			Pointer:          &c.Workers,
+			Pointer:          &cfg.Workers,
 			FlagName:         "workers",
 			FlagShortHand:    "w",
 			FlagDefaultValue: 1,
 			FlagUsage:        "number of parallel workers for CPU stress testing",
 		},
 		flag.Int{
-			Pointer:          &c.Timeout,
+			Pointer:          &cfg.Timeout,
 			FlagName:         "timeout",
 			FlagShortHand:    "t",
 			FlagDefaultValue: 0,
 			FlagUsage:        "timeout in seconds for the CPU stress test",
 		},
 	}
-)
+}
+
+// bindAndValidate resolves each flag that was not set on the command line from
+// the environment (STRESSY_ prefix), then validates the resulting values.
+// Command-line flags take precedence over environment variables.
+func bindAndValidate(cmd *cobra.Command, flags []interface{}) error {
+	v := viper.New()
+	v.SetEnvPrefix("STRESSY")
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	v.AutomaticEnv()
+
+	if err := flag.Bind(cmd, v); err != nil {
+		return err
+	}
+
+	return flag.Validate(cmd, flags)
+}
 
 func main() {
 	if err := flag.Load(cmd, cobraFlags); err != nil {

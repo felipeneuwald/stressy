@@ -1,0 +1,45 @@
+name: Load tool versions
+description: >-
+  Read tool versions from .github/versions.env — the canonical manifest shared
+  by every workflow — and expose each one as a step output, so a version never
+  has to be bumped in more than one place. Run after actions/checkout: this is
+  a local action and needs the workspace to read the file.
+
+outputs:
+  go:
+    description: Go version for actions/setup-go (e.g. "stable").
+    value: ${{ steps.read.outputs.go }}
+  golangci-lint:
+    description: golangci-lint version, without leading "v" (e.g. "2.12.2").
+    value: ${{ steps.read.outputs.golangci-lint }}
+  goreleaser:
+    description: GoReleaser version constraint for goreleaser-action (e.g. "~> v2").
+    value: ${{ steps.read.outputs.goreleaser }}
+  govulncheck:
+    description: Module query for `go run golang.org/x/vuln/cmd/govulncheck@...` (e.g. "latest").
+    value: ${{ steps.read.outputs.govulncheck }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      run: |
+        set -euo pipefail
+        file=".github/versions.env"
+        if [ ! -f "$file" ]; then
+          echo "::error::no version manifest at ${file}" >&2
+          exit 1
+        fi
+        # shellcheck disable=SC1090
+        set -a
+        source "$file"
+        set +a
+        # `:?` so a key deleted from the manifest fails here, naming itself,
+        # rather than silently passing an empty version to a setup action.
+        {
+          echo "go=${GO_VERSION:?missing from ${file}}"
+          echo "golangci-lint=${GOLANGCI_LINT_VERSION:?missing from ${file}}"
+          echo "goreleaser=${GORELEASER_VERSION:?missing from ${file}}"
+          echo "govulncheck=${GOVULNCHECK_VERSION:?missing from ${file}}"
+        } >> "$GITHUB_OUTPUT"

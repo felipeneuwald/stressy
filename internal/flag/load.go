@@ -20,7 +20,8 @@ import (
 // the list of allowed values in parentheses.
 //
 // Example usage text for a flag with allowed values:
-//   --format string   Output format (allowed: "json", "yaml", "text")
+//
+//	--format string   Output format (allowed: "json", "yaml", "text")
 //
 // Returns an error if an unsupported flag type is provided.
 func Load(cmd *cobra.Command, flags []interface{}) error {

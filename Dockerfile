@@ -1,4 +1,4 @@
-FROM alpine:3.19
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.source="https://github.com/felipeneuwald/stressy"
 LABEL org.opencontainers.image.description="A simple stress test tool"

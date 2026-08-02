@@ -1,0 +1,75 @@
+# Dependabot keeps dependencies moving without a human having to notice a CVE
+# first. Every security release in CHANGELOG.md so far — 0.3.1, 0.3.2, 0.3.3 —
+# was retroactive: an advisory was published, and some time later someone went
+# and bumped the module by hand.
+#
+# The schedule matters as much as the diffs it produces. Each pull request runs
+# CI, and CI is where govulncheck lives now that the nightly cron is gone (#11:
+# GitHub disables scheduled workflows after 60 days of repository inactivity,
+# and it had already done so here). Weekly dependabot traffic is what keeps a
+# vulnerability scan running against a repository nobody is pushing to.
+version: 2
+
+updates:
+  # go.mod / go.sum.
+  #
+  # Indirect dependencies are in scope — dependabot updates anything written
+  # into the manifest, and the `// indirect` block is where this project's
+  # exposure actually sits. #18 would delete most of it by dropping viper.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One pull request a week for everything routine. Majors are left out of
+      # the group on purpose: a breaking bump should fail on its own rather
+      # than hold a batch of patch updates hostage behind a red build.
+      go-modules:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # The `uses:` refs in .github/workflows/ — actions/checkout, actions/setup-go,
+  # the three docker/* setup steps, goreleaser/goreleaser-action.
+  #
+  # Two blind spots worth stating outright, because neither is visible from the
+  # diffs this produces:
+  #   - Only `uses:` refs get bumped, never a step's input values. This never
+  #     reaches the tool versions in .github/versions.env, so it does not
+  #     address the stale `go-version:` input in #13 or the goreleaser
+  #     `version:` input in #23 — both are inputs, not refs. The pinned
+  #     GOLANGCI_LINT_VERSION has no updater either and is still a manual
+  #     bump; that file explains why the other three float instead.
+  #   - Dependabot scans .github/workflows/ plus a root-level action.yml, and
+  #     nothing else. The composite action at .github/actions/load-versions/ is
+  #     not scanned. That costs nothing today — it runs plain bash and `uses:`
+  #     no other action — but if it ever calls one, it needs its own entry with
+  #     `directory: /.github/actions/load-versions`.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Actions are consumed by major tag (`actions/checkout@v7`), so almost
+    # every bump here classifies as a major and would otherwise arrive as its
+    # own pull request. Group all of them, majors included: each change is a
+    # one-line ref bump, and CI is what actually judges it.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    # Filtered out of release notes by the `^ci:` exclude in .goreleaser.yaml —
+    # a runner-side bump changes nothing a user installs. Do not add
+    # `include: scope`; that yields `ci(deps):`, which the anchored `^ci:`
+    # pattern no longer matches, and the filter would silently stop working.
+    commit-message:
+      prefix: ci
+
+  # The `FROM` line in ./Dockerfile, currently an end-of-life alpine (#21).
+  # Unlike the two above, these bumps ship to users in the ghcr.io images, so
+  # they keep the default commit subject and stay in the release notes.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

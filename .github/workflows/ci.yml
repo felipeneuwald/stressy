@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded pull request runs, but never a main-branch run — that
+  # result is the record for the commit.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Load tool versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          # From .github/versions.env, not go-version-file: go.mod — see #13.
+          go-version: ${{ steps.versions.outputs.go }}
+          check-latest: true
+
+      - name: Install golangci-lint
+        env:
+          GOLANGCI_LINT_VERSION: ${{ steps.versions.outputs.golangci-lint }}
+        run: |
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+            "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz" \
+            | sudo tar -xz --strip-components=1 -C /usr/local/bin "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint"
+
+      # Formatting first: `run` also reports unformatted files, but without a
+      # patch, so running it first would fail with nothing actionable.
+      - name: Check formatting
+        run: golangci-lint fmt --diff
+
+      - name: Lint
+        run: golangci-lint run ./...
+
+      # Not redundant with golangci-lint's govet: uniq-by-line means a vet
+      # finding sharing a line with another linter's finding is dropped.
+      - name: Vet
+        run: go vet ./...
+
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Load tool versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.versions.outputs.go }}
+          check-latest: true
+
+      # .goreleaser.yaml runs `go mod tidy` as a before-hook, and goreleaser's
+      # dirty-tree check runs several stages earlier — so drift here does not
+      # fail the release, it silently rewrites go.mod and ships a dependency
+      # graph nobody reviewed.
+      - name: Check go.mod is tidy
+        run: go mod tidy -diff
+
+      # setup-go restores a module cache; this re-checks the restored zips
+      # against go.sum, which download-time verification does not cover.
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Build
+        run: go build ./...
+
+      # -race is here so the first test that does exercise Run's goroutines is
+      # covered from day one. Note it would not catch #14, which is a double
+      # close, not a data race.
+      - name: Test
+        run: go test -race ./...
+
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Load tool versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.versions.outputs.go }}
+          check-latest: true
+
+      # This is the only govulncheck in the repo: the nightly cron workflow was
+      # removed because GitHub silently disables schedules after 60 days of
+      # repository inactivity, which it had already done (#11). Note the two
+      # scans are not equivalent — this one fires on change, so it cannot catch
+      # a CVE published against a dependency while nobody is pushing. Weekly
+      # dependabot PRs (#22) are what restores that, since each one runs CI.
+      # The version floats; versions.env says why.
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@${{ steps.versions.outputs.govulncheck }} ./...

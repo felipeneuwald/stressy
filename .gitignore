@@ -14,3 +14,14 @@ bin/
 
 # Environment variables
 .env
+
+# GoReleaser output — `goreleaser release --snapshot --clean` writes every
+# cross-compiled binary here. Committing them to a public repo is permanent.
+dist/
+
+# Go workspace files, which are local-machine state
+go.work
+go.work.sum
+
+# macOS
+.DS_Store

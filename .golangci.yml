@@ -1,0 +1,39 @@
+version: "2"
+
+# Owns formatting as well as linting, so CI has one Go gate rather than a
+# hand-rolled `gofmt -l` step alongside it. `golangci-lint fmt --diff` must run
+# before `run`: `run` also reports "File is not properly formatted", but with no
+# patch, so it fails first and the diff never gets printed.
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/felipeneuwald/stressy
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      # fieldalignment optimises struct padding. Stressy allocates a handful of
+      # structs for the lifetime of the process; ordering fields for the packer
+      # instead of for the reader is a bad trade here.
+      disable:
+        - fieldalignment
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

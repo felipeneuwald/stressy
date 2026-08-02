@@ -16,7 +16,7 @@ import (
 // It manages multiple worker goroutines that perform CPU-intensive operations
 // and handles graceful shutdown through signals or timeouts.
 type Stressy struct {
-	workers int            // number of parallel worker goroutines
+	workers int           // number of parallel worker goroutines
 	timeout int           // duration in seconds (0 for indefinite)
 	done    chan struct{} // channel for coordinating graceful shutdown
 }

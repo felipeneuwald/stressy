@@ -8,36 +8,69 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/felipeneuwald/stressy/internal/flag"
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
-// newTestCmd builds a command over the real flag definitions and the real
-// configuration resolution, but with a no-op RunE: the actual RunE starts the
-// stress test, which saturates the CPU and blocks until signalled.
+// newTestCmd builds the real command over the given configuration, but with a
+// no-op RunE: the actual RunE starts the stress test, which saturates the CPU
+// and blocks until signalled. Everything else — flag registration, the
+// environment binding in PreRunE — is what main() runs.
 func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	t.Helper()
 
-	flags := newFlags(cfg)
-	c := &cobra.Command{
-		Use:               "stressy",
-		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
-		SilenceUsage:      true,
-		SilenceErrors:     true,
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return bindAndValidate(cmd, flags)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error { return nil },
-	}
+	c := newCmd(cfg)
+	c.RunE = func(*cobra.Command, []string) error { return nil }
 
-	if err := flag.Load(c, flags); err != nil {
-		t.Fatalf("flag.Load() error = %v, want nil", err)
-	}
+	// The real command leaves both unset, so a failing case prints its error
+	// and the full usage screen into the test output. Neither is what these
+	// cases assert on; they read the error returned by Execute.
+	c.SilenceUsage = true
+	c.SilenceErrors = true
 
 	c.SetOut(io.Discard)
 	c.SetErr(io.Discard)
 
 	return c
+}
+
+// TestFlagRegistration pins the operator-facing shape of both flags: name,
+// shorthand, type placeholder and default are what `stressy --help` prints,
+// and the shorthands are the spelling every existing command line uses.
+func TestFlagRegistration(t *testing.T) {
+	tests := []struct {
+		name      string
+		shorthand string
+		flagType  string
+		defValue  string
+	}{
+		{name: "workers", shorthand: "w", flagType: "int", defValue: "1"},
+		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s"},
+	}
+
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := cmd.Flags().Lookup(tt.name)
+			if f == nil {
+				t.Fatalf("Lookup(%q) = nil, want the registered flag", tt.name)
+			}
+
+			if f.Shorthand != tt.shorthand {
+				t.Errorf("%s shorthand = %q, want %q", tt.name, f.Shorthand, tt.shorthand)
+			}
+			if f.Value.Type() != tt.flagType {
+				t.Errorf("%s type = %q, want %q", tt.name, f.Value.Type(), tt.flagType)
+			}
+			if f.DefValue != tt.defValue {
+				t.Errorf("%s default = %q, want %q", tt.name, f.DefValue, tt.defValue)
+			}
+			if f.Usage == "" {
+				t.Errorf("%s usage = %q, want help text", tt.name, f.Usage)
+			}
+		})
+	}
 }
 
 func TestConfigResolution(t *testing.T) {

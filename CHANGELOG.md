@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI workflow running lint, formatting, `go vet`, module tidiness and verification, build, `go test -race` and govulncheck on every push to main and every pull request
 - `.github/dependabot.yml` checking Go modules and GitHub Actions `uses:` refs weekly, so dependency security fixes arrive as pull requests instead of waiting for someone to notice an advisory. Each of those pull requests also runs CI, which is what keeps govulncheck scanning during quiet periods now that the nightly schedule is gone
 - `.golangci.yml` configuring golangci-lint as the single Go gate for both formatting and linting
-- Unit tests for the flag package (registration, environment binding, allowed-value validation), for stress test configuration validation, and CLI-level tests covering flag/environment variable precedence
+- Unit tests for the flag package (registration, environment binding, allowed-value validation, duration parsing in both spellings), for stress test configuration validation, and CLI-level tests covering flag/environment variable precedence
 
 ### Changed
 - `--timeout` now takes a duration, so `-t 5m` and `STRESSY_TIMEOUT=90s` say what they look like they say. Bare seconds still work — `-t 60` is a minute, exactly as before — because `time.ParseDuration` rejects a unit-less number, so the two spellings cannot be confused for one another and no existing command line or environment variable had to change. This also closes the sharpest edge of the malformed-value bug below: `STRESSY_TIMEOUT=60s` was the natural thing to type and the one thing that silently produced an endless run (#26)

@@ -28,6 +28,15 @@ builds:
     # The other half of a reproducible build: pin the artefact mtimes to the
     # commit rather than to whenever the release job happened to run.
     mod_timestamp: '{{ .CommitTimestamp }}'
+    # The whole cross product, with no `ignore:` block. There used to be one,
+    # excluding windows/arm64 — carried in with the first release config and
+    # explained nowhere — while the README advertised six operating systems and
+    # two architectures with no exception stated (#28). A Windows-on-ARM user
+    # therefore found no binary, or ran the amd64 one under emulation, which for
+    # a CPU stress tool means the numbers it exists to produce are meaningless.
+    # Go cross-compiles the target fine at CGO_ENABLED=0; it costs one more
+    # artefact per release. TestReleaseMatrixMatchesREADME reads these two lists
+    # back and fails if they and the README stop agreeing.
     goos:
       - linux
       - windows
@@ -38,9 +47,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
 
 archives:
   # `formats`, not the `format` singular deprecated in goreleaser v2.6. Every

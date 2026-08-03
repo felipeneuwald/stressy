@@ -164,7 +164,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       # `check` first so a malformed config fails in about a second rather than
-      # after eleven cross-compiles. It warns about the pending dockers_v2
+      # after twelve cross-compiles. It warns about the pending dockers_v2
       # migration and still exits 0; that migration is deferred on purpose and
       # the warning is not something to silence here — see .goreleaser.yaml.
       - name: Check release config

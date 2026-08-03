@@ -69,3 +69,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Release the tag that triggered this run, not whatever goreleaser
+          # infers from the commit. Those differ whenever two tags share a
+          # commit — which is exactly what a release-candidate flow produces:
+          # tag vX.Y.Z-rc1, verify it, then tag vX.Y.Z on the same commit.
+          # goreleaser then picked the rc, tried to re-publish an already
+          # published release and failed on `already_exists` asset uploads,
+          # having skipped the real release entirely. github.ref_name is
+          # unambiguous: for a tag push it is the tag being pushed.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}

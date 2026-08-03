@@ -154,10 +154,10 @@ func TestMalformedEnvValueIsRejected(t *testing.T) {
 		t.Fatal("Execute() error = nil, want the malformed value to be rejected")
 	}
 
-	// The message has to name the offending value, or an operator staring at a
-	// failed run has nothing to go on.
-	if !strings.Contains(err.Error(), "timeout") || !strings.Contains(err.Error(), "not-a-number") {
-		t.Errorf("Execute() error = %q, want it to name the flag and the bad value", err)
+	// The message has to name the offending variable and value, or an operator
+	// staring at a failed run has nothing to go on.
+	if !strings.Contains(err.Error(), "STRESSY_TIMEOUT") || !strings.Contains(err.Error(), "not-a-number") {
+		t.Errorf("Execute() error = %q, want it to name the variable and the bad value", err)
 	}
 }
 

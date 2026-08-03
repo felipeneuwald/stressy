@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Release binaries are 43% smaller, 4,849,266 bytes down to 2,758,210 when built with the release `-s -w` flags, and both container images shrink by the same 2 MB. That is the whole of what viper was costing: dropping it removes no functionality, because none of what it linked in was reachable (see Removed) (#18)
+- A rejected environment variable now names the variable instead of the flag — `invalid STRESSY_TIMEOUT: …` where it used to say `invalid configured value for --timeout: …`. The environment is the only thing that code path reads, so the variable is what the operator can actually go and correct; pflag's own wrapper still names the flag inside the same message, so nothing was lost. Everything else a user sees is byte-identical to 0.4.0: `--help`, `--version`, unknown-flag errors, invalid-flag-value errors and every configured run (#18)
+
+### Removed
+- viper, and with it twelve of the seventeen modules in `go.mod` — eleven of the twelve `// indirect` entries were reachable through nothing else. What is left is cobra, pflag, `golang.org/x/crypto`, `k8s.io/utils` and cobra's own `mousetrap`. viper was doing exactly one thing here: `AutomaticEnv` over `STRESSY_WORKERS` and `STRESSY_TIMEOUT`. Nothing in this project reads a config file, watches the filesystem or parses TOML, YAML or dotenv, so every decoder those two variables dragged in was linked in dead. `internal/flag.Bind` now takes an environment prefix and reads `os.LookupEnv` itself. The three behaviours that were viper's rather than this project's are kept deliberately and covered by tests: command-line flags still beat the environment, a dash in a flag name still maps to an underscore in the variable, and an empty value is still treated as unset — that last one because `STRESSY_WORKERS=${WORKERS}` with `WORKERS` undefined is a common shape in compose files and pod specs, and rejecting it would break deployments that run today (#18)
+- `golang.org/x/text` and `golang.org/x/sys` from the module graph entirely. Neither was imported here; they entered through viper's `afero` and `fsnotify`, and they are what container scanners flag on the published images (#18)
 
 ## [0.4.0] - 2026-08-03
 ### Added

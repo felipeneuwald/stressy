@@ -3,14 +3,16 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/felipeneuwald/stressy/internal/flag"
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
+
+// envPrefix is the prefix on the environment variables that configure stressy:
+// --workers is read from STRESSY_WORKERS, --timeout from STRESSY_TIMEOUT.
+const envPrefix = "STRESSY"
 
 var (
 	version = "0.0.0"
@@ -61,12 +63,7 @@ func newFlags(cfg *stressy.Cfg) []interface{} {
 // the environment (STRESSY_ prefix), then validates the resulting values.
 // Command-line flags take precedence over environment variables.
 func bindAndValidate(cmd *cobra.Command, flags []interface{}) error {
-	v := viper.New()
-	v.SetEnvPrefix("STRESSY")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	v.AutomaticEnv()
-
-	if err := flag.Bind(cmd, v); err != nil {
+	if err := flag.Bind(cmd, envPrefix); err != nil {
 		return err
 	}
 

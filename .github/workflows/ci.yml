@@ -123,3 +123,65 @@ jobs:
       # The version floats; versions.env says why.
       - name: Run govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@${{ steps.versions.outputs.govulncheck }} ./...
+
+  # The release pipeline used to be the one part of this repository CI never
+  # touched: goreleaser.yml only fires on `push: tags: ['v*']`, so a change to
+  # .goreleaser.yaml or the Dockerfile was validated for the first time at the
+  # moment it published. This job rehearses everything a release does except
+  # the publishing itself. No `paths:` filter on purpose — the case that
+  # motivated it is a dependabot bump to an action or base image, where nobody
+  # thinks to check the release path, and a filter would skip exactly those.
+  release-dryrun:
+    name: Release dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # goreleaser derives the snapshot version from tag history
+          # (snapshot.version_template is `{{ incpatch .Version }}-next`), so a
+          # shallow clone gives it nothing to increment. goreleaser.yml uses
+          # fetch-depth: 0 for the same reason.
+          fetch-depth: 0
+
+      - name: Load tool versions
+        id: versions
+        uses: ./.github/actions/load-versions
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.versions.outputs.go }}
+          check-latest: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      # `check` first so a malformed config fails in about a second rather than
+      # after eleven cross-compiles. It warns about the pending dockers_v2
+      # migration and still exits 0; that migration is deferred on purpose and
+      # the warning is not something to silence here — see .goreleaser.yaml.
+      - name: Check release config
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: ${{ steps.versions.outputs.goreleaser }}
+          args: check
+
+      # --snapshot never publishes: no registry login, no image push, no GitHub
+      # release. It covers builds, archives, checksums and both image builds.
+      # It does NOT cover docker_manifests — goreleaser skips those without
+      # pushed images — nor the ghcr login/push or release creation. Those stay
+      # verifiable only by a real tag; a vX.Y.Z-rcN tag is the cheap way, since
+      # prerelease: auto and the `{{ if not .Prerelease }}` guards keep it off
+      # :latest and off GitHub "Latest".
+      - name: Snapshot release
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: ${{ steps.versions.outputs.goreleaser }}
+          args: release --snapshot --clean

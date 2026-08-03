@@ -62,6 +62,46 @@ func TestValidateConfig(t *testing.T) {
 	}
 }
 
+// TestStartupMessage covers #17c. The default run announced itself as "1
+// workers", which is the first line this tool prints and, on a default run,
+// the only one until it is interrupted.
+func TestStartupMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Cfg
+		want string
+	}{
+		{
+			name: "one worker",
+			cfg:  Cfg{Workers: 1},
+			want: "Starting CPU stress test with 1 worker indefinitely",
+		},
+		{
+			name: "several workers",
+			cfg:  Cfg{Workers: 4},
+			want: "Starting CPU stress test with 4 workers indefinitely",
+		},
+		{
+			name: "one worker, bounded",
+			cfg:  Cfg{Workers: 1, Timeout: 5 * time.Minute},
+			want: "Starting CPU stress test with 1 worker for 5m0s",
+		},
+		{
+			name: "several workers, bounded",
+			cfg:  Cfg{Workers: 4, Timeout: 30 * time.Second},
+			want: "Starting CPU stress test with 4 workers for 30s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.cfg).startupMessage(); got != tt.want {
+				t.Errorf("startupMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRunRejectsInvalidConfig covers Run's validation gate, which fails before
 // any worker goroutine is started.
 func TestRunRejectsInvalidConfig(t *testing.T) {

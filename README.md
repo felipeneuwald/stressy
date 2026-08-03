@@ -40,7 +40,7 @@ Download the latest binary for your platform from the [releases page](https://gi
 ## Usage
 
 ```bash
-# Start stress test with default settings (1 worker)
+# Load the machine: one worker per usable CPU, until interrupted
 stressy
 
 # Use 4 parallel workers
@@ -81,6 +81,12 @@ docker run ghcr.io/felipeneuwald/stressy:latest -w 4 -t 5m
 docker run -e STRESSY_WORKERS=4 -e STRESSY_TIMEOUT=5m ghcr.io/felipeneuwald/stressy:latest
 ```
 
+A container with a CPU limit gets a worker count to match it: `docker run --cpus
+2` on a 16-core host starts 2 workers, not 16, because the default is read from
+the cgroup CPU quota rather than the host's core count. The floor is 2, so
+`--cpus 1` also starts 2 — pass `-w 1` if you want exactly one. The same holds
+for a Kubernetes `resources.limits.cpu`.
+
 The image is `FROM scratch` — it holds the static binary and the licence, nothing
 else. Two consequences worth knowing before you deploy it:
 
@@ -97,7 +103,7 @@ else. Two consequences worth knowing before you deploy it:
 
 ### Available Flags
 
-- `-w, --workers`: Number of parallel workers (must be 1 or greater)
+- `-w, --workers`: Number of parallel workers (must be 1 or greater). Defaults to the number of CPUs this process can use — the host's core count, narrowed by the CPU affinity mask, by a cgroup CPU limit if there is one, and by the `GOMAXPROCS` environment variable if it is set. `stressy --help` prints the number for the machine you run it on
 - `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. A bare number is read as seconds, so `-t 60` still means one minute. `0`, the default, runs until interrupted
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information

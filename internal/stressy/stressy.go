@@ -68,13 +68,8 @@ func (s *Stressy) Run() error {
 		return err
 	}
 
-	fmt.Printf("Starting CPU stress test with %d workers", s.workers)
-	if s.timeout > 0 {
-		fmt.Printf(" for %s\n", s.timeout)
-	} else {
-		fmt.Printf(" indefinitely\n")
-	}
-	fmt.Printf("Use --help for additional information\n")
+	fmt.Println(s.startupMessage())
+	fmt.Println("Use --help for additional information")
 
 	// One context carries both shutdown triggers, which is what makes them
 	// safe to race: a context cancels once no matter how many sources fire,
@@ -112,6 +107,28 @@ func (s *Stressy) Run() error {
 	wg.Wait()
 
 	return nil
+}
+
+// startupMessage is the line Run prints before the workers start: how many of
+// them, and for how long. It is the first thing every user of this tool sees,
+// and it used to open with "1 workers" on the default run (#17c).
+//
+// Built as a string rather than printed in place so that it is testable
+// without capturing os.Stdout.
+func (s *Stressy) startupMessage() string {
+	workers := "workers"
+	if s.workers == 1 {
+		workers = "worker"
+	}
+
+	// The timeout is a time.Duration and formats itself — "30s", "5m0s" — so
+	// the other half of #17c, "1 seconds", went with the duration flag in #26.
+	duration := "indefinitely"
+	if s.timeout > 0 {
+		duration = "for " + s.timeout.String()
+	}
+
+	return fmt.Sprintf("Starting CPU stress test with %d %s %s", s.workers, workers, duration)
 }
 
 // validateConfig checks if the Stressy instance's configuration is valid.

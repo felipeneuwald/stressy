@@ -27,9 +27,13 @@ COPY --chmod=0755 stressy /usr/local/bin/stressy
 COPY LICENSE /LICENSE
 
 # Numeric on purpose: scratch has no /etc/passwd for a name to resolve against.
-# Kubernetes Pod Security Standards `restricted` requires runAsNonRoot, which a
-# root-only image cannot satisfy — and a cluster is where this tool most often
-# runs. 65532 is the conventional "nonroot" UID.
+# 65532 is the conventional "nonroot" UID.
+#
+# A cluster is where this tool most often runs, and the `restricted` Pod
+# Security Standard requires `runAsNonRoot: true`. The kubelet refuses to start
+# a container under that setting if the image would run as root, so a root-only
+# image forces every pod spec to pin `runAsUser` as well. Baking the UID in
+# here means the pod only has to say what the standard already requires.
 USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/stressy"]

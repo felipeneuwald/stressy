@@ -84,9 +84,10 @@ docker run -e STRESSY_WORKERS=4 -e STRESSY_TIMEOUT=5m ghcr.io/felipeneuwald/stre
 The image is `FROM scratch` — it holds the static binary and the licence, nothing
 else. Two consequences worth knowing before you deploy it:
 
-- It runs as UID/GID `65532`, so it is admissible into a Kubernetes namespace
-  enforcing the `restricted` Pod Security Standard without a `securityContext`
-  override.
+- It runs as UID/GID `65532`. The `restricted` Pod Security Standard requires
+  `runAsNonRoot: true`, and the kubelet will not start a container under that
+  setting if the image would run as root — so with a root image every pod spec
+  has to pin `runAsUser` too. This one does not.
 - There is no shell, so `docker exec` and `kubectl exec` into a running
   container will not work. Everything stressy reports, it reports on stdout at
   startup.

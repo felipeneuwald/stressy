@@ -52,6 +52,12 @@ archives:
 # ghcr.io/felipeneuwald/stressy:latest — the tag `docker run` resolves by
 # default — at a release candidate. goreleaser skips an image or manifest whose
 # template renders empty, so the versioned tags still publish as normal.
+#
+# goreleaser warns on every run that `dockers` and `docker_manifests` are being
+# phased out in favour of `dockers_v2`, which folds both blocks into one
+# multi-platform build. That migration is deliberately not part of this change:
+# it rewrites the publishing path, and the publishing path is the one thing
+# that cannot be rehearsed outside a real tag push. Worth its own issue.
 dockers:
   - image_templates:
       - "ghcr.io/felipeneuwald/stressy:{{ .Version }}-amd64"

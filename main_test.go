@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -45,7 +46,7 @@ func TestConfigResolution(t *testing.T) {
 		env         map[string]string
 		args        []string
 		wantWorkers int
-		wantTimeout int
+		wantTimeout time.Duration
 	}{
 		{
 			name:        "defaults",
@@ -56,33 +57,61 @@ func TestConfigResolution(t *testing.T) {
 			name:        "long flags",
 			args:        []string{"--workers", "4", "--timeout", "30"},
 			wantWorkers: 4,
-			wantTimeout: 30,
+			wantTimeout: 30 * time.Second,
 		},
 		{
 			name:        "short flags",
 			args:        []string{"-w", "4", "-t", "30"},
 			wantWorkers: 4,
-			wantTimeout: 30,
+			wantTimeout: 30 * time.Second,
 		},
 		{
 			name:        "environment variables",
 			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60"},
 			wantWorkers: 8,
-			wantTimeout: 60,
+			wantTimeout: 60 * time.Second,
 		},
 		{
 			name:        "flags take precedence over environment variables",
 			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60"},
 			args:        []string{"-w", "2", "-t", "5"},
 			wantWorkers: 2,
-			wantTimeout: 5,
+			wantTimeout: 5 * time.Second,
 		},
 		{
 			name:        "environment fills in only the unset flag",
 			env:         map[string]string{"STRESSY_WORKERS": "8"},
 			args:        []string{"-t", "5"},
 			wantWorkers: 8,
-			wantTimeout: 5,
+			wantTimeout: 5 * time.Second,
+		},
+		{
+			name:        "duration flag",
+			args:        []string{"--timeout", "5m"},
+			wantWorkers: 1,
+			wantTimeout: 5 * time.Minute,
+		},
+		{
+			name:        "compound duration flag",
+			args:        []string{"-t", "1h30m"},
+			wantWorkers: 1,
+			wantTimeout: 90 * time.Minute,
+		},
+		// #26: STRESSY_TIMEOUT=60s is the natural thing to type, and before
+		// --timeout took a duration it was the sharpest edge of #10 — the value
+		// failed to parse, and the run that was meant to last a minute ran
+		// forever and exited 0.
+		{
+			name:        "duration environment variable",
+			env:         map[string]string{"STRESSY_TIMEOUT": "60s"},
+			wantWorkers: 1,
+			wantTimeout: 60 * time.Second,
+		},
+		{
+			name:        "sub-second duration",
+			args:        []string{"-t", "250ms"},
+			wantWorkers: 1,
+			wantTimeout: 250 * time.Millisecond,
 		},
 	}
 
@@ -104,7 +133,7 @@ func TestConfigResolution(t *testing.T) {
 				t.Errorf("Workers = %d, want %d", cfg.Workers, tt.wantWorkers)
 			}
 			if cfg.Timeout != tt.wantTimeout {
-				t.Errorf("Timeout = %d, want %d", cfg.Timeout, tt.wantTimeout)
+				t.Errorf("Timeout = %s, want %s", cfg.Timeout, tt.wantTimeout)
 			}
 		})
 	}
@@ -141,5 +170,28 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 
 	if err := cmd.Execute(); err == nil {
 		t.Error("Execute() error = nil, want a parse error")
+	}
+}
+
+// TestTimeoutHelpAdvertisesDuration guards the operator-facing half of #26: a
+// timeout that accepts "5m" but still describes itself as an int of seconds
+// leaves the reader no reason to try the duration form.
+func TestTimeoutHelpAdvertisesDuration(t *testing.T) {
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	f := cmd.Flags().Lookup("timeout")
+	if f == nil {
+		t.Fatal(`Lookup("timeout") = nil, want the registered flag`)
+	}
+
+	if f.Value.Type() != "duration" {
+		t.Errorf("timeout type = %q, want %q", f.Value.Type(), "duration")
+	}
+	if !strings.Contains(f.Usage, "5m") {
+		t.Errorf("timeout usage = %q, want it to show the duration form", f.Usage)
+	}
+	if !strings.Contains(f.Usage, "seconds") {
+		t.Errorf("timeout usage = %q, want it to state that a bare number is seconds", f.Usage)
 	}
 }

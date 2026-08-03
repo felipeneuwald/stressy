@@ -17,14 +17,14 @@ import (
 // and handles graceful shutdown through signals or timeouts.
 type Stressy struct {
 	workers int           // number of parallel worker goroutines
-	timeout int           // duration in seconds (0 for indefinite)
+	timeout time.Duration // how long to run (0 for indefinite)
 	done    chan struct{} // channel for coordinating graceful shutdown
 }
 
 // Cfg holds the configuration parameters for creating a new Stressy instance.
 type Cfg struct {
-	Workers int // number of parallel worker goroutines
-	Timeout int // duration in seconds (0 for indefinite)
+	Workers int           // number of parallel worker goroutines
+	Timeout time.Duration // how long to run (0 for indefinite)
 }
 
 // New creates and returns a new Stressy instance with the given configuration.
@@ -57,7 +57,7 @@ func (s *Stressy) Run() error {
 
 	fmt.Printf("Starting CPU stress test with %d workers", s.workers)
 	if s.timeout > 0 {
-		fmt.Printf(" for %d seconds\n", s.timeout)
+		fmt.Printf(" for %s\n", s.timeout)
 	} else {
 		fmt.Printf(" indefinitely\n")
 	}
@@ -109,7 +109,7 @@ func (s *Stressy) validateConfig() error {
 // It runs in its own goroutine and closes the done channel
 // when the configured timeout is reached.
 func (s *Stressy) timer() {
-	timer := time.NewTimer(time.Duration(s.timeout) * time.Second)
+	timer := time.NewTimer(s.timeout)
 	<-timer.C
 	close(s.done)
 }

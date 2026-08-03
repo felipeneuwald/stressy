@@ -1,15 +1,26 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
+# No `before: hooks: [go mod tidy]`. goreleaser's dirty-tree check runs several
+# stages before the hooks do, so a tidy that rewrote go.mod mid-release could
+# not fail the build — it just stamped the binary `v0.3.3+dirty` and shipped a
+# dependency graph nobody reviewed. Tidiness is a CI check now (`go mod tidy
+# -diff` in .github/workflows/ci.yml), where a drift is a red pull request
+# rather than a silent mutation of the tree being released.
 
 builds:
   - env:
       - CGO_ENABLED=0
     main: .
+    # -trimpath keeps the builder's absolute paths out of the binary; without
+    # it the same commit built on two machines produces two different
+    # artefacts.
+    flags:
+      - -trimpath
     ldflags:
       - -s -w -X main.version={{.Version}}
+    # The other half of a reproducible build: pin the artefact mtimes to the
+    # commit rather than to whenever the release job happened to run.
+    mod_timestamp: '{{ .CommitTimestamp }}'
     goos:
       - linux
       - windows
@@ -25,7 +36,9 @@ builds:
         goarch: arm64
 
 archives:
-  - format: binary
+  # `formats`, not the `format` singular deprecated in goreleaser v2.6. Every
+  # target is a bare binary, so there is no per-OS override to make.
+  - formats: [binary]
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -33,14 +46,16 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    format_overrides:
-      - goos: windows
-        format: binary
 
+# The `{{ if not .Prerelease }}` guards below keep the floating tags off
+# pre-releases: tagging v0.4.0-rc1 would otherwise repoint
+# ghcr.io/felipeneuwald/stressy:latest — the tag `docker run` resolves by
+# default — at a release candidate. goreleaser skips an image or manifest whose
+# template renders empty, so the versioned tags still publish as normal.
 dockers:
   - image_templates:
       - "ghcr.io/felipeneuwald/stressy:{{ .Version }}-amd64"
-      - "ghcr.io/felipeneuwald/stressy:latest-amd64"
+      - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-amd64{{ end }}"
     use: buildx
     goarch: amd64
     goos: linux
@@ -51,11 +66,12 @@ dockers:
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
     dockerfile: Dockerfile
+    # Staged into the build context for the Dockerfile's `COPY LICENSE`.
     extra_files:
       - LICENSE
   - image_templates:
       - "ghcr.io/felipeneuwald/stressy:{{ .Version }}-arm64"
-      - "ghcr.io/felipeneuwald/stressy:latest-arm64"
+      - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-arm64{{ end }}"
     use: buildx
     goarch: arm64
     goos: linux
@@ -74,10 +90,10 @@ docker_manifests:
     image_templates:
       - ghcr.io/felipeneuwald/stressy:{{ .Version }}-amd64
       - ghcr.io/felipeneuwald/stressy:{{ .Version }}-arm64
-  - name_template: ghcr.io/felipeneuwald/stressy:latest
+  - name_template: "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest{{ end }}"
     image_templates:
-      - ghcr.io/felipeneuwald/stressy:latest-amd64
-      - ghcr.io/felipeneuwald/stressy:latest-arm64
+      - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-amd64{{ end }}"
+      - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-arm64{{ end }}"
 
 changelog:
   sort: asc
@@ -100,3 +116,12 @@ release:
   github:
     owner: felipeneuwald
     name: stressy
+  # Mark a tag carrying a semver pre-release suffix as a GitHub pre-release, so
+  # it does not become the "Latest" release users land on. Pairs with the
+  # `{{ if not .Prerelease }}` image guards above.
+  prerelease: auto
+  # `formats: binary` means there is no archive to carry the licence, so upload
+  # it as its own release asset. MIT requires the text to accompany the copies
+  # being redistributed, and these binaries are the copies.
+  extra_files:
+    - glob: LICENSE

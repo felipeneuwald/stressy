@@ -60,6 +60,12 @@ func Validate(cmd *cobra.Command, flags []interface{}) error {
 					allowedValues: sliceIntToSliceString(v.AllowedValues),
 				})
 
+			case Duration:
+				// Nothing to collect: Duration carries no AllowedValues, for the
+				// reason given in type.go. The case exists so the default arm
+				// does not report the type as unsupported.
+				continue
+
 			default:
 				unsupportedFlagType = ptr.To(fmt.Sprintf("%T", v))
 			}

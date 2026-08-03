@@ -21,7 +21,7 @@ var (
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
 All flags can be configured using environment variables with the STRESSY_ prefix.
-For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=60.`,
+For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Version:           version,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
@@ -47,12 +47,12 @@ func newFlags(cfg *stressy.Cfg) []interface{} {
 			FlagDefaultValue: 1,
 			FlagUsage:        "number of parallel workers for CPU stress testing",
 		},
-		flag.Int{
+		flag.Duration{
 			Pointer:          &cfg.Timeout,
 			FlagName:         "timeout",
 			FlagShortHand:    "t",
 			FlagDefaultValue: 0,
-			FlagUsage:        "timeout in seconds for the CPU stress test",
+			FlagUsage:        "how long to run the stress test, as a duration such as 30s or 5m; a bare number is seconds, and 0 runs until interrupted",
 		},
 	}
 }

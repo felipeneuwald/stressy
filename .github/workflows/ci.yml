@@ -73,10 +73,12 @@ jobs:
           go-version: ${{ steps.versions.outputs.go }}
           check-latest: true
 
-      # .goreleaser.yaml runs `go mod tidy` as a before-hook, and goreleaser's
-      # dirty-tree check runs several stages earlier — so drift here does not
-      # fail the release, it silently rewrites go.mod and ships a dependency
-      # graph nobody reviewed.
+      # The only thing keeping go.mod tidy. .goreleaser.yaml used to run `go mod
+      # tidy` as a before-hook, but goreleaser's dirty-tree check runs several
+      # stages earlier, so a drift did not fail the release — it silently
+      # rewrote go.mod, shipped a dependency graph nobody reviewed and stamped
+      # the binary `+dirty`. That hook is gone (#23); this check is what
+      # replaced it, and it has to stay green for a release to be trustworthy.
       - name: Check go.mod is tidy
         run: go mod tidy -diff
 

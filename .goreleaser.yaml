@@ -16,8 +16,15 @@ builds:
     # artefacts.
     flags:
       - -trimpath
+    # `main.injected`, not `main.version`: the variable read by --version is
+    # resolved from this one and from debug.ReadBuildInfo, so that binaries
+    # built without ldflags — every `go install` and every `go build` — report
+    # their version too (#40). The names have to agree, and a `-X` naming a
+    # variable that does not exist is dropped silently rather than failing the
+    # link, so TestLdflagsVariableMatchesGoreleaser checks this line against
+    # version.go.
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.injected={{.Version}}
     # The other half of a reproducible build: pin the artefact mtimes to the
     # commit rather than to whenever the release job happened to run.
     mod_timestamp: '{{ .CommitTimestamp }}'

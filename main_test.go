@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"io"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +24,11 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	c := newCmd(cfg)
 	c.RunE = func(*cobra.Command, []string) error { return nil }
 
-	// The real command leaves both unset, so a failing case prints its error
-	// and the full usage screen into the test output. Neither is what these
-	// cases assert on; they read the error returned by Execute.
-	c.SilenceUsage = true
+	// Output goes nowhere: these cases read the error Execute returns, and a
+	// failing one would otherwise print its message and, for a usage error,
+	// the whole help screen into the test output. SilenceUsage is deliberately
+	// left as newCmd sets it, since TestUsageIsSilencedOnlyForRuntimeErrors
+	// asserts on exactly that.
 	c.SilenceErrors = true
 
 	c.SetOut(io.Discard)
@@ -43,7 +47,7 @@ func TestFlagRegistration(t *testing.T) {
 		flagType  string
 		defValue  string
 	}{
-		{name: "workers", shorthand: "w", flagType: "int", defValue: "1"},
+		{name: "workers", shorthand: "w", flagType: "int", defValue: strconv.Itoa(defaultWorkers())},
 		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s"},
 	}
 
@@ -73,6 +77,11 @@ func TestFlagRegistration(t *testing.T) {
 	}
 }
 
+// TestConfigResolution covers what a run is configured with, from flags, from
+// the environment, and from neither. The cases that expect defaultWorkers()
+// are the ones that pass no worker count: since #24 that default is the
+// machine's, so a literal here would pin the test to whatever CPU count it
+// happened to be written on.
 func TestConfigResolution(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -83,7 +92,7 @@ func TestConfigResolution(t *testing.T) {
 	}{
 		{
 			name:        "defaults",
-			wantWorkers: 1,
+			wantWorkers: defaultWorkers(),
 			wantTimeout: 0,
 		},
 		{
@@ -121,13 +130,13 @@ func TestConfigResolution(t *testing.T) {
 		{
 			name:        "duration flag",
 			args:        []string{"--timeout", "5m"},
-			wantWorkers: 1,
+			wantWorkers: defaultWorkers(),
 			wantTimeout: 5 * time.Minute,
 		},
 		{
 			name:        "compound duration flag",
 			args:        []string{"-t", "1h30m"},
-			wantWorkers: 1,
+			wantWorkers: defaultWorkers(),
 			wantTimeout: 90 * time.Minute,
 		},
 		// #26: STRESSY_TIMEOUT=60s is the natural thing to type, and before
@@ -137,13 +146,13 @@ func TestConfigResolution(t *testing.T) {
 		{
 			name:        "duration environment variable",
 			env:         map[string]string{"STRESSY_TIMEOUT": "60s"},
-			wantWorkers: 1,
+			wantWorkers: defaultWorkers(),
 			wantTimeout: 60 * time.Second,
 		},
 		{
 			name:        "sub-second duration",
 			args:        []string{"-t", "250ms"},
-			wantWorkers: 1,
+			wantWorkers: defaultWorkers(),
 			wantTimeout: 250 * time.Millisecond,
 		},
 	}
@@ -203,6 +212,144 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 
 	if err := cmd.Execute(); err == nil {
 		t.Error("Execute() error = nil, want a parse error")
+	}
+}
+
+// TestWorkersDefaultsToUsableCPUs covers #24. A CPU stress tool that loads one
+// core unless told otherwise is a surprising default, and the fix has to be
+// GOMAXPROCS rather than NumCPU or it is worse in a container than what it
+// replaced: NumCPU ignores the cgroup CPU quota, so a 64-core node under
+// `limits.cpu: 2` would start 64 workers to be throttled into 2 cores' worth
+// of bursty, unrepresentative load.
+//
+// Moving GOMAXPROCS away from NumCPU is what separates the two candidates:
+// only one of them follows.
+func TestWorkersDefaultsToUsableCPUs(t *testing.T) {
+	want := 3
+	if runtime.NumCPU() == want {
+		// Otherwise NumCPU would satisfy this too and the case proves nothing.
+		want = 2
+	}
+
+	prev := runtime.GOMAXPROCS(want)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+	cmd.SetArgs(nil)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v, want nil", err)
+	}
+
+	if cfg.Workers != want {
+		t.Errorf("Workers = %d with GOMAXPROCS at %d and NumCPU at %d, want %d", cfg.Workers, want, runtime.NumCPU(), want)
+	}
+}
+
+// TestPositionalArgumentsAreRejected covers #17b. stressy has never read an
+// operand, and cobra's default is to accept and discard them — so `stressy 4`,
+// a reasonable guess at the worker count, ran the default number of workers
+// and said nothing about the 4.
+func TestPositionalArgumentsAreRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantArg string
+	}{
+		{name: "bare argument", args: []string{"4"}, wantArg: "4"},
+		{name: "several arguments", args: []string{"foo", "bar", "4"}, wantArg: "foo"},
+		{name: "argument after a flag", args: []string{"-w", "4", "extra"}, wantArg: "extra"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("Execute(%q) error = nil, want the argument to be rejected", tt.args)
+			}
+
+			// cobra.NoArgs would report `unknown command "4"`, which sends a
+			// user of a command with no subcommands looking for one. The
+			// message has to name what was rejected instead.
+			if !strings.Contains(err.Error(), tt.wantArg) {
+				t.Errorf("Execute(%q) error = %q, want it to name %q", tt.args, err, tt.wantArg)
+			}
+		})
+	}
+}
+
+// TestUsageIsSilencedOnlyForRuntimeErrors covers #17a. Every failure used to
+// print the entire help screen after its message, so `stressy -w 0` answered a
+// one-line configuration mistake with a page of flags. The fix has to keep
+// usage on the paths where it is the answer: a user who mistypes a flag name
+// wants the flag list.
+//
+// cobra parses flags and validates operands before PreRunE runs, which is what
+// makes the split available: anything failing from PreRunE on is a runtime
+// error by construction.
+func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		args []string
+		// runErr is returned from RunE, standing in for the stress test's own
+		// validation — the real RunE would saturate the CPU.
+		runErr      error
+		wantSilence bool
+	}{
+		{
+			name:        "unknown flag",
+			args:        []string{"--bogus"},
+			wantSilence: false,
+		},
+		{
+			name:        "invalid flag value",
+			args:        []string{"-t", "not-a-number"},
+			wantSilence: false,
+		},
+		{
+			name:        "positional argument",
+			args:        []string{"4"},
+			wantSilence: false,
+		},
+		{
+			// A bad STRESSY_TIMEOUT is a configuration error, not a spelling
+			// one, and the message already names the variable and the value.
+			name:        "rejected environment variable",
+			env:         map[string]string{"STRESSY_TIMEOUT": "not-a-number"},
+			wantSilence: true,
+		},
+		{
+			name:        "runtime failure",
+			runErr:      errors.New("workers must be 1 or greater"),
+			wantSilence: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+			cmd.RunE = func(*cobra.Command, []string) error { return tt.runErr }
+			cmd.SetArgs(tt.args)
+
+			if err := cmd.Execute(); err == nil {
+				t.Fatal("Execute() error = nil, want the case to fail")
+			}
+
+			if cmd.SilenceUsage != tt.wantSilence {
+				t.Errorf("SilenceUsage = %t, want %t", cmd.SilenceUsage, tt.wantSilence)
+			}
+		})
 	}
 }
 

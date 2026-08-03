@@ -90,7 +90,7 @@ git clone https://github.com/felipeneuwald/stressy.git
 cd stressy
 
 # Build and run
-go build ./cmd
+go build
 ./stressy
 ```
 

@@ -1,4 +1,6 @@
-# Binary files
+# Binary files. `go build` in the repo root writes the binary next to the
+# source it was built from, so it is named for the module: /stressy.
+/stressy
 bin/
 *.exe
 *.exe~

@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The nightly vulnerability scan workflow. GitHub disables schedule-triggered workflows in public repositories after 60 days of inactivity, which had already happened, so it had been reporting nothing for months while appearing healthy. govulncheck now runs in CI on every push and pull request instead
 
 ### Fixed
+- `go install github.com/felipeneuwald/stressy@latest`, the README's primary installation instruction, failed with "module found (v0.3.3), but does not contain package": `package main` lived in `cmd/`, so the module root held no installable package and the path the README advertised could not resolve. The main package now sits at the module root, so that command works as written; `main: ./cmd` in `.goreleaser.yaml` moved with it. Release artefacts and images are unaffected — same binary, same name, same import path for every `internal/` package (#9)
+- The README's build instruction, `go build ./cmd` followed by `./stressy`, produced a binary named `cmd` and then ran something that was not there. `go build` in the repo root now produces `stressy` (#9)
 - A malformed environment variable (for example `STRESSY_TIMEOUT=abc`) was silently discarded, leaving the flag at zero and turning a bounded run into an indefinite one that exited 0; it is now rejected with a message naming the flag and the value
 - gofmt formatting in `internal/flag/load.go` and `internal/stressy/stressy.go`
 

@@ -14,8 +14,8 @@ updates:
   # go.mod / go.sum.
   #
   # Indirect dependencies are in scope — dependabot updates anything written
-  # into the manifest, and the `// indirect` block is where this project's
-  # exposure actually sits. #18 would delete most of it by dropping viper.
+  # into the manifest. That block used to be where this project's exposure
+  # actually sat; dropping viper (#18) reduced it to cobra's `mousetrap`.
   - package-ecosystem: gomod
     directory: /
     schedule:

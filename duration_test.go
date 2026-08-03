@@ -1,4 +1,4 @@
-package flag
+package main
 
 import (
 	"math"
@@ -64,29 +64,18 @@ func TestParseDuration(t *testing.T) {
 	}
 }
 
-func TestLoadDuration(t *testing.T) {
+// TestDurationValue covers durationValue as pflag sees it: the default written
+// through the caller's pointer, the placeholder printed in help text, and both
+// accepted spellings surviving a Set through a registered flag.
+func TestDurationValue(t *testing.T) {
 	var timeout time.Duration
 
-	cmd := &cobra.Command{Use: "test"}
-	err := Load(cmd, []interface{}{
-		Duration{
-			Pointer:          &timeout,
-			FlagName:         "timeout",
-			FlagShortHand:    "t",
-			FlagDefaultValue: 90 * time.Second,
-			FlagUsage:        "how long to run",
-		},
-	})
-	if err != nil {
-		t.Fatalf("Load() error = %v, want nil", err)
-	}
+	c := &cobra.Command{Use: "test"}
+	c.Flags().VarP(newDurationValue(90*time.Second, &timeout), "timeout", "t", "how long to run")
 
-	f := cmd.Flags().Lookup("timeout")
+	f := c.Flags().Lookup("timeout")
 	if f == nil {
 		t.Fatal(`Lookup("timeout") = nil, want the registered flag`)
-	}
-	if f.Shorthand != "t" {
-		t.Errorf("timeout shorthand = %q, want %q", f.Shorthand, "t")
 	}
 	// pflag prints Type() as the value placeholder in help output.
 	if f.Value.Type() != "duration" {
@@ -99,14 +88,14 @@ func TestLoadDuration(t *testing.T) {
 		t.Errorf("timeout = %s, want the default written through the pointer", timeout)
 	}
 
-	if err = cmd.Flags().Set("timeout", "5m"); err != nil {
+	if err := c.Flags().Set("timeout", "5m"); err != nil {
 		t.Fatalf("Set() error = %v, want nil", err)
 	}
 	if timeout != 5*time.Minute {
 		t.Errorf("timeout = %s, want %s", timeout, 5*time.Minute)
 	}
 
-	if err = cmd.Flags().Set("timeout", "300"); err != nil {
+	if err := c.Flags().Set("timeout", "300"); err != nil {
 		t.Fatalf("Set() error = %v, want the bare-seconds form to keep working", err)
 	}
 	if timeout != 300*time.Second {
@@ -115,55 +104,11 @@ func TestLoadDuration(t *testing.T) {
 
 	// pflag wraps the parse error, so both the flag name and the offending
 	// value have to survive to reach the operator.
-	err = cmd.Flags().Set("timeout", "5 minutes")
+	err := c.Flags().Set("timeout", "5 minutes")
 	if err == nil {
 		t.Fatal("Set() error = nil, want a parse error")
 	}
 	if !strings.Contains(err.Error(), "timeout") || !strings.Contains(err.Error(), "5 minutes") {
 		t.Errorf("Set() error = %q, want it to name the flag and the bad value", err)
-	}
-}
-
-// TestLoadDurationWithoutShorthand covers the Var branch; TestLoadDuration
-// covers VarP.
-func TestLoadDurationWithoutShorthand(t *testing.T) {
-	var timeout time.Duration
-
-	cmd := newCmdWithFlags(t, []interface{}{
-		Duration{Pointer: &timeout, FlagName: "timeout", FlagDefaultValue: 0, FlagUsage: "how long to run"},
-	})
-
-	f := cmd.Flags().Lookup("timeout")
-	if f == nil {
-		t.Fatal(`Lookup("timeout") = nil, want the registered flag`)
-	}
-	if f.Shorthand != "" {
-		t.Errorf("timeout shorthand = %q, want none", f.Shorthand)
-	}
-}
-
-// TestValidateDuration is the regression guard for the type switch: Duration
-// carries no AllowedValues, so Validate has nothing to check — but without an
-// explicit case it would fall to the default arm and reject every command that
-// registers one.
-func TestValidateDuration(t *testing.T) {
-	var timeout time.Duration
-	flags := []interface{}{
-		Duration{
-			Pointer:          &timeout,
-			FlagName:         "timeout",
-			FlagShortHand:    "t",
-			FlagDefaultValue: 0,
-			FlagUsage:        "how long to run",
-		},
-	}
-
-	cmd := newCmdWithFlags(t, flags)
-	if err := cmd.Flags().Set("timeout", "5m"); err != nil {
-		t.Fatalf("Set() error = %v, want nil", err)
-	}
-
-	if err := Validate(cmd, flags); err != nil {
-		t.Errorf("Validate() error = %v, want nil", err)
 	}
 }

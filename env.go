@@ -1,4 +1,4 @@
-package flag
+package main
 
 import (
 	"fmt"
@@ -9,28 +9,20 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Bind resolves each flag that was not given on the command line from the
+// bindEnv resolves each flag that was not given on the command line from the
 // environment, so that a flag can be set either way.
 //
 // The variable a flag is read from is its name, upper-cased and prefixed:
 // under prefix "STRESSY", --workers is STRESSY_WORKERS. See envName for the
 // exact mapping.
 //
-// The function takes:
-//   - cmd: The cobra.Command containing the flags to bind
-//   - prefix: The environment variable prefix, without the trailing underscore
-//
 // Command-line flags take precedence: a flag pflag has recorded as Changed is
 // left alone, so the environment only ever fills in what the operator did not
 // pass.
 //
-// Returns an error if cmd is nil, or if an environment value cannot be parsed
-// into its flag's type.
-func Bind(cmd *cobra.Command, prefix string) error {
-	if cmd == nil {
-		return fmt.Errorf("cmd is nil")
-	}
-
+// Returns an error if an environment value cannot be parsed into its flag's
+// type.
+func bindEnv(cmd *cobra.Command, prefix string) error {
 	// VisitAll has no early exit, so record the first failure and skip the
 	// remaining flags rather than reporting the last one.
 	var err error
@@ -70,7 +62,7 @@ func Bind(cmd *cobra.Command, prefix string) error {
 //
 // The dash-to-underscore substitution is not decoration: a dash cannot appear
 // in a portable environment variable name, so without it every multi-word flag
-// this package registers would be unreachable from the environment.
+// would be unreachable from the environment.
 func envName(prefix, flagName string) string {
 	name := strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))
 	if prefix == "" {

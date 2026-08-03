@@ -1,8 +1,10 @@
-package flag
+package main
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // testPrefix rather than STRESSY, so that a STRESSY_* variable exported in the
@@ -10,13 +12,18 @@ import (
 // mean anything if the variable is genuinely absent.
 const testPrefix = "FLAGTEST"
 
-func TestBindNilCommand(t *testing.T) {
-	if err := Bind(nil, testPrefix); err == nil {
-		t.Error("Bind(nil, prefix) error = nil, want an error")
-	}
+// newCmdWithIntFlag builds a bare command carrying a single int flag, so that
+// these cases exercise bindEnv rather than stressy's own flag set.
+func newCmdWithIntFlag(t *testing.T, name string, p *int, defaultValue int) *cobra.Command {
+	t.Helper()
+
+	c := &cobra.Command{Use: "test"}
+	c.Flags().IntVar(p, name, defaultValue, "number of workers")
+
+	return c
 }
 
-func TestBind(t *testing.T) {
+func TestBindEnv(t *testing.T) {
 	tests := []struct {
 		name        string
 		env         map[string]string
@@ -28,7 +35,7 @@ func TestBind(t *testing.T) {
 		{name: "command line wins over the environment", env: map[string]string{"FLAGTEST_WORKERS": "8"}, commandLine: "2", want: 2},
 		{name: "command line is kept when the environment is unset", commandLine: "2", want: 2},
 		// An empty value is what STRESSY_WORKERS=${WORKERS} expands to when
-		// WORKERS is undefined. It has always been ignored; see Bind.
+		// WORKERS is undefined. It has always been ignored; see bindEnv.
 		{name: "empty environment value is treated as unset", env: map[string]string{"FLAGTEST_WORKERS": ""}, want: 1},
 		// The prefix is what keeps a flag from picking up an unrelated
 		// variable that happens to share its name.
@@ -42,20 +49,18 @@ func TestBind(t *testing.T) {
 			}
 
 			var workers int
-			cmd := newCmdWithFlags(t, []interface{}{
-				Int{Pointer: &workers, FlagName: "workers", FlagDefaultValue: 1, FlagUsage: "number of workers"},
-			})
+			c := newCmdWithIntFlag(t, "workers", &workers, 1)
 
 			// Setting through Flags() marks the flag as Changed, which is how
 			// pflag records "the user passed this on the command line".
 			if tt.commandLine != "" {
-				if err := cmd.Flags().Set("workers", tt.commandLine); err != nil {
+				if err := c.Flags().Set("workers", tt.commandLine); err != nil {
 					t.Fatalf("Set() error = %v, want nil", err)
 				}
 			}
 
-			if err := Bind(cmd, testPrefix); err != nil {
-				t.Fatalf("Bind() error = %v, want nil", err)
+			if err := bindEnv(c, testPrefix); err != nil {
+				t.Fatalf("bindEnv() error = %v, want nil", err)
 			}
 
 			if workers != tt.want {
@@ -65,41 +70,37 @@ func TestBind(t *testing.T) {
 	}
 }
 
-// TestBindMalformedValue covers the half of #10 that lives in this package: a
-// value pflag cannot parse must surface as an error rather than leaving the
-// flag at its zero value, and the message has to name the variable that caused
-// it — that name is the only thing the operator can act on.
-func TestBindMalformedValue(t *testing.T) {
+// TestBindEnvMalformedValue covers the half of #10 that lives here: a value
+// pflag cannot parse must surface as an error rather than leaving the flag at
+// its zero value, and the message has to name the variable that caused it —
+// that name is the only thing the operator can act on.
+func TestBindEnvMalformedValue(t *testing.T) {
 	t.Setenv("FLAGTEST_WORKERS", "not-a-number")
 
 	var workers int
-	cmd := newCmdWithFlags(t, []interface{}{
-		Int{Pointer: &workers, FlagName: "workers", FlagDefaultValue: 1, FlagUsage: "number of workers"},
-	})
+	c := newCmdWithIntFlag(t, "workers", &workers, 1)
 
-	err := Bind(cmd, testPrefix)
+	err := bindEnv(c, testPrefix)
 	if err == nil {
-		t.Fatal("Bind() error = nil, want the malformed value to be rejected")
+		t.Fatal("bindEnv() error = nil, want the malformed value to be rejected")
 	}
 
 	if !strings.Contains(err.Error(), "FLAGTEST_WORKERS") || !strings.Contains(err.Error(), "not-a-number") {
-		t.Errorf("Bind() error = %q, want it to name the variable and the bad value", err)
+		t.Errorf("bindEnv() error = %q, want it to name the variable and the bad value", err)
 	}
 }
 
-// TestBindMultiWordFlagName is the case envName's dash substitution exists for:
-// a dash is not portable in an environment variable name, so --max-retries has
-// to be reachable as FLAGTEST_MAX_RETRIES or not at all.
-func TestBindMultiWordFlagName(t *testing.T) {
+// TestBindEnvMultiWordFlagName is the case envName's dash substitution exists
+// for: a dash is not portable in an environment variable name, so --max-retries
+// has to be reachable as FLAGTEST_MAX_RETRIES or not at all.
+func TestBindEnvMultiWordFlagName(t *testing.T) {
 	t.Setenv("FLAGTEST_MAX_RETRIES", "3")
 
 	var retries int
-	cmd := newCmdWithFlags(t, []interface{}{
-		Int{Pointer: &retries, FlagName: "max-retries", FlagDefaultValue: 0, FlagUsage: "retries"},
-	})
+	c := newCmdWithIntFlag(t, "max-retries", &retries, 0)
 
-	if err := Bind(cmd, testPrefix); err != nil {
-		t.Fatalf("Bind() error = %v, want nil", err)
+	if err := bindEnv(c, testPrefix); err != nil {
+		t.Fatalf("bindEnv() error = %v, want nil", err)
 	}
 
 	if retries != 3 {

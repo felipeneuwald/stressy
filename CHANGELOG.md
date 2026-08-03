@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-08-03
 ### Added
 - CI workflow running lint, formatting, `go vet`, module tidiness and verification, build, `go test -race` and govulncheck on every push to main and every pull request
 - A `release-dryrun` CI job running `goreleaser check` and `goreleaser release --snapshot --clean` on every push and pull request. The release pipeline was the one part of the repository CI never touched: `.github/workflows/goreleaser.yml` fires only on a `v*` tag, so a change to `.goreleaser.yaml` or the `Dockerfile` was validated for the first time at the moment it published — the same asymmetry that let #13 sit unnoticed for eighteen months. It runs unfiltered rather than on `paths:`, because the case it exists for is a dependabot bump to an action or base image, where nobody thinks to check the release path and a filter would skip exactly that. The dry run covers the eleven cross-compiles, `-trimpath` and `mod_timestamp`, archive naming, checksums and both architecture image builds against the real `Dockerfile`. It does not cover the publishing half: snapshot mode skips the ghcr.io login, the image push, `docker_manifests` and release creation, so those stay verifiable only by pushing a real tag — cheaply, as a `vX.Y.Z-rcN` pre-release, which the `{{ if not .Prerelease }}` guards keep off `:latest` (#36)
@@ -90,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic CPU stress testing functionality
 - Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/felipeneuwald/stressy/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/felipeneuwald/stressy/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/felipeneuwald/stressy/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/felipeneuwald/stressy/compare/v0.3.0...v0.3.1

@@ -51,6 +51,19 @@ func Load(cmd *cobra.Command, flags []interface{}) error {
 
 			cmd.Flags().IntVar(v.Pointer, v.FlagName, v.FlagDefaultValue, v.FlagUsage)
 
+		case Duration:
+			// Var rather than DurationVar: the stock pflag duration type would
+			// reject the bare-seconds spelling this project has accepted since
+			// 0.1.0. See durationValue.
+			value := newDurationValue(v.FlagDefaultValue, v.Pointer)
+
+			if v.FlagShortHand != "" {
+				cmd.Flags().VarP(value, v.FlagName, v.FlagShortHand, v.FlagUsage)
+				continue
+			}
+
+			cmd.Flags().Var(value, v.FlagName, v.FlagUsage)
+
 		default:
 			return fmt.Errorf("can't load unsupported flag type: %T", v)
 		}

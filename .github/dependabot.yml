@@ -66,10 +66,14 @@ updates:
     commit-message:
       prefix: ci
 
-  # The `FROM` line in ./Dockerfile, currently an end-of-life alpine (#21).
-  # Unlike the two above, these bumps ship to users in the ghcr.io images, so
-  # they keep the default commit subject and stay in the release notes.
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
+  # No `docker` ecosystem entry, deliberately. The Dockerfile is `FROM scratch`
+  # (#21), so there is no base image to update and an entry here would be
+  # config that can never produce a pull request. If a shell-bearing base ever
+  # comes back, this is what needs restoring — and unlike the two above, those
+  # bumps ship to users in the ghcr.io images, so they should keep the default
+  # commit subject and stay in the release notes:
+  #
+  #   - package-ecosystem: docker
+  #     directory: /
+  #     schedule:
+  #       interval: weekly

@@ -1,5 +1,7 @@
 package flag
 
+import "time"
+
 // String holds a *cobra.Command flag of type string.
 // It provides a type-safe way to define string flags with validation support.
 type String struct {
@@ -42,4 +44,29 @@ type Int struct {
 
 	// FlagDefaultValue is used when the flag is not explicitly set
 	FlagDefaultValue int
+}
+
+// Duration holds a *cobra.Command flag of type time.Duration.
+// Values are parsed by parseDuration, so both "5m" and a bare count of seconds
+// are accepted.
+//
+// Unlike String and Int there is deliberately no AllowedValues field: a
+// duration is a continuous quantity, and enumerating the permitted values of
+// one is not a meaningful constraint. Load and Validate still need a case for
+// this type, or their type switches would report it as unsupported.
+type Duration struct {
+	// Pointer points to the variable that will store the flag value
+	Pointer *time.Duration
+
+	// FlagName is the name of the flag (used with -- prefix)
+	FlagName string
+
+	// FlagShortHand is an optional single-character shorthand (used with - prefix)
+	FlagShortHand string
+
+	// FlagUsage is the help text describing the flag's purpose
+	FlagUsage string
+
+	// FlagDefaultValue is used when the flag is not explicitly set
+	FlagDefaultValue time.Duration
 }

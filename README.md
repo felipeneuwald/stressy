@@ -48,17 +48,23 @@ stressy -w 4
 # or
 stressy --workers 4
 
-# Run for 60 seconds
-stressy -t 60
+# Run for five minutes
+stressy -t 5m
 # or
-stressy --timeout 60
+stressy --timeout 5m
+
+# Any Go duration works: 90s, 1h30m, 250ms
+stressy -t 1h30m
+
+# A bare number is read as seconds, so pre-0.4 command lines keep working
+stressy -t 60
 
 # Combine workers and timeout
-stressy -w 4 -t 60
+stressy -w 4 -t 5m
 
 # Using environment variables
 export STRESSY_WORKERS=4
-export STRESSY_TIMEOUT=60
+export STRESSY_TIMEOUT=5m
 stressy
 ```
 
@@ -68,17 +74,31 @@ stressy
 # Start stress test with default settings
 docker run ghcr.io/felipeneuwald/stressy:latest
 
-# Use 4 parallel workers for 60 seconds
-docker run ghcr.io/felipeneuwald/stressy:latest -w 4 -t 60
+# Use 4 parallel workers for five minutes
+docker run ghcr.io/felipeneuwald/stressy:latest -w 4 -t 5m
 
 # Using environment variables
-docker run -e STRESSY_WORKERS=4 -e STRESSY_TIMEOUT=60 ghcr.io/felipeneuwald/stressy:latest
+docker run -e STRESSY_WORKERS=4 -e STRESSY_TIMEOUT=5m ghcr.io/felipeneuwald/stressy:latest
 ```
+
+The image is `FROM scratch` — it holds the static binary and the licence, nothing
+else. Two consequences worth knowing before you deploy it:
+
+- It runs as UID/GID `65532`. The `restricted` Pod Security Standard requires
+  `runAsNonRoot: true`, and the kubelet will not start a container under that
+  setting if the image would run as root — so with a root image every pod spec
+  has to pin `runAsUser` too. This one does not.
+- There is no shell, so `docker exec` and `kubectl exec` into a running
+  container will not work. Everything stressy reports, it reports on stdout at
+  startup.
+
+`:latest` only ever points at a full release; pre-release tags such as
+`v0.4.0-rc1` publish under their own version tag and leave `:latest` alone.
 
 ### Available Flags
 
 - `-w, --workers`: Number of parallel workers (must be 1 or greater)
-- `-t, --timeout`: Test duration in seconds (0 for indefinite, must be 0 or greater)
+- `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. A bare number is read as seconds, so `-t 60` still means one minute. `0`, the default, runs until interrupted
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information
 

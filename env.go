@@ -18,7 +18,8 @@ import (
 //
 // Command-line flags take precedence: a flag pflag has recorded as Changed is
 // left alone, so the environment only ever fills in what the operator did not
-// pass.
+// pass. The flags cobra registers for itself are skipped entirely; see
+// setByCobra.
 //
 // Returns an error if an environment value cannot be parsed into its flag's
 // type.
@@ -29,6 +30,17 @@ func bindEnv(cmd *cobra.Command, prefix string) error {
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		if err != nil || f.Changed {
+			return
+		}
+
+		// --help and --version are cobra's rather than this command's, and
+		// cobra acts on both while parsing flags — before PreRunE, which is
+		// where this runs. An environment value for either could therefore
+		// never take effect, but it could still fail to parse and take the run
+		// down with it: STRESSY_VERSION=0.4.0, a plausible way to pin an image
+		// tag in a compose file or a CI environment, aborted every run with a
+		// bool-parse error naming a flag the operator never touched (#47).
+		if setByCobra(f) {
 			return
 		}
 
@@ -53,6 +65,20 @@ func bindEnv(cmd *cobra.Command, prefix string) error {
 	})
 
 	return err
+}
+
+// setByCobra reports whether cobra registered this flag itself rather than
+// newCmd declaring it — --help always, and --version because the command sets
+// Version. cobra annotates both as its own as it adds them, and reads that same
+// annotation to tell its flags from a command's own, so this is the library's
+// own distinction rather than a list of names maintained here: a flag the
+// command declares under either name would still be configured from the
+// environment, and one cobra adds in a future version would not.
+//
+// TestCobraAnnotatesItsOwnFlags pins the annotation against the cobra in
+// go.mod, because if a bump dropped it the only symptom would be #47 returning.
+func setByCobra(f *pflag.Flag) bool {
+	return len(f.Annotations[cobra.FlagSetByCobraAnnotation]) > 0
 }
 
 // envName is the environment variable a flag is read from: the prefix, an

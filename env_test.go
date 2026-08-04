@@ -23,6 +23,24 @@ func newCmdWithIntFlag(t *testing.T, name string, p *int, defaultValue int) *cob
 	return c
 }
 
+// newCmdWithCobraFlags builds a command carrying cobra's own --help and
+// --version beside a real flag, registered the way Execute registers them. A
+// bare cobra.Command has neither, so a case built on one cannot reach #47 at
+// all.
+func newCmdWithCobraFlags(t *testing.T, p *int) *cobra.Command {
+	t.Helper()
+
+	c := newCmdWithIntFlag(t, "workers", p, 1)
+
+	// InitDefaultVersionFlag registers nothing unless Version is set, which is
+	// the condition newCmd meets by setting it on the root command.
+	c.Version = "0.0.0-test"
+	c.InitDefaultHelpFlag()
+	c.InitDefaultVersionFlag()
+
+	return c
+}
+
 func TestBindEnv(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -87,6 +105,103 @@ func TestBindEnvMalformedValue(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "FLAGTEST_WORKERS") || !strings.Contains(err.Error(), "not-a-number") {
 		t.Errorf("bindEnv() error = %q, want it to name the variable and the bad value", err)
+	}
+}
+
+// TestBindEnvIgnoresFlagsCobraSetItself covers #47. cobra registers --help and
+// --version itself and acts on both while parsing flags, before PreRunE and so
+// before bindEnv — an environment value for either can never take effect, and
+// handing one to a bool flag could only ever fail. STRESSY_VERSION=0.4.0, which
+// is a plausible way to pin an image tag in a compose file or a CI environment,
+// therefore aborted every run with a ParseBool error about a flag the operator
+// never touched.
+func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		// The half that took the run down.
+		{
+			name: "values no bool flag can parse",
+			env:  map[string]string{"FLAGTEST_HELP": "yes", "FLAGTEST_VERSION": "0.4.0", "FLAGTEST_WORKERS": "8"},
+		},
+		// And the half that parsed and was then discarded, cobra having already
+		// decided not to print help by the time bindEnv ran. Ignoring it
+		// deliberately is the same run without the pretence that it configures
+		// anything.
+		{
+			name: "values a bool flag can parse",
+			env:  map[string]string{"FLAGTEST_HELP": "true", "FLAGTEST_VERSION": "true", "FLAGTEST_WORKERS": "8"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			var workers int
+			c := newCmdWithCobraFlags(t, &workers)
+
+			if err := bindEnv(c, testPrefix); err != nil {
+				t.Fatalf("bindEnv() error = %v, want nil", err)
+			}
+
+			// Left untouched, not merely left unreported: a bound value goes
+			// nowhere near the error return, but it is still a flag the command
+			// now carries as set by someone.
+			for _, name := range []string{"help", "version"} {
+				f := c.Flags().Lookup(name)
+				if f == nil {
+					t.Fatalf("Lookup(%q) = nil, want the flag cobra registers", name)
+				}
+
+				if f.Changed || f.Value.String() != "false" {
+					t.Errorf("--%s = %q, changed = %t; want %q and untouched", name, f.Value.String(), f.Changed, "false")
+				}
+			}
+
+			// The flag beside them still resolves. What #47 asks for is an
+			// exclusion of cobra's two, not of the environment.
+			if workers != 8 {
+				t.Errorf("workers = %d, want 8 from the environment", workers)
+			}
+		})
+	}
+}
+
+// TestCobraAnnotatesItsOwnFlags pins the assumption bindEnv's exclusion is keyed
+// on. cobra marks --help and --version as its own as it registers them, and
+// reads that annotation itself to tell its flags from a command's — but nothing
+// a compiler can see says the next cobra still will, and if one stopped, the
+// only symptom would be #47 returning: STRESSY_VERSION failing runs again. A
+// dependency bump that drops it has to fail here instead.
+func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
+	var workers int
+	c := newCmdWithCobraFlags(t, &workers)
+
+	for _, name := range []string{"help", "version"} {
+		f := c.Flags().Lookup(name)
+		if f == nil {
+			t.Fatalf("Lookup(%q) = nil, want cobra to have registered its flag", name)
+		}
+
+		if !setByCobra(f) {
+			t.Errorf("--%s carries no %s annotation, which is how bindEnv knows to leave it alone (#47)", name, cobra.FlagSetByCobraAnnotation)
+		}
+	}
+
+	// And the command's own flag must not carry it, or the exclusion would take
+	// every flag stressy declares with it and the environment would configure
+	// nothing at all.
+	f := c.Flags().Lookup("workers")
+	if f == nil {
+		t.Fatal(`Lookup("workers") = nil, want the registered flag`)
+	}
+
+	if setByCobra(f) {
+		t.Errorf("--workers carries the %s annotation, so the exclusion would swallow stressy's own flags", cobra.FlagSetByCobraAnnotation)
 	}
 }
 

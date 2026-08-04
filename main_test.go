@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"runtime"
@@ -212,6 +213,105 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 
 	if err := cmd.Execute(); err == nil {
 		t.Error("Execute() error = nil, want a parse error")
+	}
+}
+
+// TestFlagsCobraSetItselfAreNotConfigurable covers #47 through the command
+// main() runs. --help and --version exist only because Execute registers them,
+// so this is the level the bug lived at: STRESSY_VERSION is a plausible name
+// for an image-tag pin in a compose file or a CI environment, and one leaking
+// into the container aborted every run with exit 1 over a flag the operator
+// never touched. Both spellings are covered — the value that failed to parse
+// and the value that parsed and was silently discarded.
+func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "values no bool flag can parse",
+			env:  map[string]string{"STRESSY_HELP": "yes", "STRESSY_VERSION": "0.4.0"},
+		},
+		{
+			name: "values a bool flag can parse",
+			env:  map[string]string{"STRESSY_HELP": "true", "STRESSY_VERSION": "true"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			var ran bool
+			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
+			cmd.SetArgs([]string{"-w", "1", "-t", "100ms"})
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error = %v, want the run the operator asked for", err)
+			}
+
+			// A run that starts, with the configuration the command line gave
+			// it: "no error" alone would also pass on a build where the value
+			// had taken effect and printed help instead of running anything.
+			if !ran {
+				t.Error("RunE was not called, want the stress test to run")
+			}
+
+			if cfg.Workers != 1 || cfg.Timeout != 100*time.Millisecond {
+				t.Errorf("Workers, Timeout = %d, %s; want 1, 100ms", cfg.Workers, cfg.Timeout)
+			}
+		})
+	}
+}
+
+// TestFlagsCobraSetItselfWorkOnTheCommandLine is the other half of #47: what
+// the fix takes away is the environment's reach into --help and --version, not
+// the flags. Both are cobra's to act on, both print and return before RunE, and
+// neither had a test holding it to that.
+func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "version", args: []string{"--version"}, want: "version " + version},
+		{name: "version shorthand", args: []string{"-v"}, want: "version " + version},
+		{name: "help", args: []string{"--help"}, want: "Usage:"},
+		{name: "help shorthand", args: []string{"-h"}, want: "Usage:"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			// newTestCmd discards output; these cases are about what gets
+			// printed, so they read it back instead.
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+
+			var ran bool
+			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
+			cmd.SetArgs(tt.args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute(%q) error = %v, want nil", tt.args, err)
+			}
+
+			if ran {
+				t.Errorf("Execute(%q) ran the stress test, want cobra to have answered and returned", tt.args)
+			}
+
+			if !strings.Contains(out.String(), tt.want) {
+				t.Errorf("Execute(%q) printed %q, want it to contain %q", tt.args, out.String(), tt.want)
+			}
+		})
 	}
 }
 

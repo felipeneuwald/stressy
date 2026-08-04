@@ -4,9 +4,10 @@ package stressy
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +25,64 @@ import (
 // doubling: it pegged a core no harder and made the cancellation check below
 // unreachable (#15).
 const hashCost = 12
+
+// shutdownSignals are the signals that end a run. Both are ordinary requests to
+// stop — Ctrl-C at a terminal, a `docker stop`, a kubelet draining a node — and
+// each is reported by the exit code SignalError carries.
+var shutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+
+// ShutdownSignals returns the signals a run stops on.
+//
+// It is exported for TestDocumentedExitCodes, which holds the README's exit
+// code table against this list: a signal handled here and documented nowhere is
+// a status an operator's supervisor reports and cannot look up, which is the
+// same class of silent gap as the release artefact nobody missed in #28.
+func ShutdownSignals() []os.Signal {
+	return slices.Clone(shutdownSignals)
+}
+
+// SignalError is what Run returns when a signal ended the run rather than the
+// timer. It carries the signal because the exit code depends on which one fired.
+//
+// It exists because the two shutdowns used to be indistinguishable from outside
+// the process: a pod SIGTERM'd five seconds into a `-t 60s` run exited 0,
+// exactly like one that ran the full minute, so the Kubernetes Job around it
+// recorded an evicted run as Complete and the `backoffLimit: 0` guarding it
+// never saw the failure it exists to bound (#48).
+//
+// It is not a failure to report. Run has already printed "Received signal,
+// shutting down..." and the run summary by the time it returns this, so the
+// caller's job is to turn it into an exit code, not to print it a second time.
+type SignalError struct {
+	// Signal is the signal that triggered the shutdown, one of ShutdownSignals.
+	Signal os.Signal
+}
+
+// Error implements error. Nothing prints it on the normal path — see the note
+// on double reporting above — so it is written for a caller that logs an
+// unexpected error rather than for an operator reading a terminal.
+func (e *SignalError) Error() string {
+	return "run interrupted by " + e.Signal.String()
+}
+
+// ExitCode is the status a run this signal ended should exit with: 128 plus the
+// signal number, which is 130 for SIGINT and 143 for SIGTERM. That is what
+// timeout(1), the shells and every process killed by an unhandled signal
+// already report, so a supervisor reading exit codes needs to know nothing
+// about stressy to read it.
+//
+// A signal that is not a syscall.Signal falls back to 1 rather than panicking:
+// every value in shutdownSignals is one on every platform releases build for,
+// and an exit code is not worth crashing a shutdown over if that stops being
+// true.
+func (e *SignalError) ExitCode() int {
+	sig, ok := e.Signal.(syscall.Signal)
+	if !ok {
+		return 1
+	}
+
+	return 128 + int(sig)
+}
 
 // Stressy represents a CPU stress testing instance.
 // It manages multiple worker goroutines that perform CPU-intensive operations
@@ -61,50 +120,104 @@ func New(c Cfg) *Stressy {
 //   - An interrupt signal is received
 //
 // Run then waits for every worker to finish the hash it is on, so it returns
-// up to one hash after the shutdown was triggered. Returns an error if the
-// configuration is invalid.
+// up to one hash after the shutdown was triggered, and prints what the run did
+// once they have all drained.
+//
+// It returns an error if the configuration is invalid, and a *SignalError — not
+// a failure, an exit code — if a signal ended the run rather than the timer.
+// A run that completes its timeout returns nil.
 func (s *Stressy) Run() error {
 	if err := s.validateConfig(); err != nil {
 		return err
 	}
 
+	// Both shutdown triggers meet in one select below, over one context that
+	// only this function cancels. That is the shape #14 left behind: two
+	// hand-rolled `close(s.done)` calls, one per trigger, with nothing
+	// coordinating them, so a signal arriving as the timer expired closed the
+	// same channel twice and panicked the process. A select takes exactly one
+	// branch however many triggers fire.
+	//
+	// The channel is what signal.NotifyContext used to be. NotifyContext
+	// cancels on either signal without saying which one fired, and the exit
+	// code is 128 plus the number of the one that did (#48) — so the signal has
+	// to be read somewhere. Reading it here, rather than from a second channel
+	// registered beside NotifyContext, keeps it to a single registration: two
+	// of them leave a window between them in which a signal reaches one and not
+	// the other. `signal.Stop` is deferred, which is the other half of what #14
+	// fixed, and the buffer is what makes a signal arriving before the select
+	// is reached a shutdown rather than a lost one.
+	//
+	// Registered before the first line is printed, so the startup output is
+	// itself evidence the handler is installed: until it is, the default
+	// disposition of either signal terminates the process outright and there is
+	// no shutdown to report. TestExitCodes relies on exactly that.
+	received := make(chan os.Signal, 1)
+	signal.Notify(received, shutdownSignals...)
+	defer signal.Stop(received)
+
 	fmt.Println(s.startupMessage())
 	fmt.Println("Use --help for additional information")
 
-	// One context carries both shutdown triggers, which is what makes them
-	// safe to race: a context cancels once no matter how many sources fire,
-	// where the two hand-rolled `close(s.done)` calls this replaces could both
-	// run and panic the process (#14). Installed before the workers start, so
-	// a signal arriving immediately is not missed.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Started before the deadline is set, so the elapsed time the summary
+	// reports is never less than the timeout the operator asked for.
+	start := time.Now()
+
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 
 	if s.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.timeout)
-		defer cancel()
+		var expire context.CancelFunc
+		ctx, expire = context.WithTimeout(ctx, s.timeout)
+		defer expire()
 	}
 
 	var wg sync.WaitGroup
+
+	// One slot per worker, written once by the worker that owns it and read
+	// only after wg.Wait(), which is what orders the two. Per-worker counters
+	// rather than one shared atomic: the workers touch nothing of each other's
+	// while they hash, and a worker's own count is a plain local until it
+	// returns.
+	hashes := make([]uint64, s.workers)
+
 	wg.Add(s.workers)
-	for range s.workers {
+	for i := range s.workers {
 		go func() {
 			defer wg.Done()
-			s.stressTestCPU(ctx)
+			hashes[i] = s.stressTestCPU(ctx)
 		}()
 	}
 
-	<-ctx.Done()
-
-	// Only the timeout produces DeadlineExceeded; a signal cancels the parent,
-	// which surfaces here as Canceled.
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		fmt.Println("Timer expired, shutting down...")
-	} else {
+	var sig os.Signal
+	select {
+	case sig = <-received:
 		fmt.Println("Received signal, shutting down...")
+	case <-ctx.Done():
+		// Nothing else cancels ctx before this point — both cancel functions
+		// above are deferred — so reaching this branch means the deadline
+		// expired. With no timeout configured ctx has no deadline and the
+		// select waits on the signal alone.
+		fmt.Println("Timer expired, shutting down...")
 	}
 
+	// Whichever branch ran, the workers stop here: on the signal path this is
+	// what tells them, and on the timer path ctx is already done and this is a
+	// no-op.
+	stop()
+
 	wg.Wait()
+
+	var computed uint64
+	for _, n := range hashes {
+		computed += n
+	}
+
+	fmt.Println(s.summaryMessage(computed, time.Since(start)))
+
+	if sig != nil {
+		return &SignalError{Signal: sig}
+	}
 
 	return nil
 }
@@ -116,11 +229,6 @@ func (s *Stressy) Run() error {
 // Built as a string rather than printed in place so that it is testable
 // without capturing os.Stdout.
 func (s *Stressy) startupMessage() string {
-	workers := "workers"
-	if s.workers == 1 {
-		workers = "worker"
-	}
-
 	// The timeout is a time.Duration and formats itself — "30s", "5m0s" — so
 	// the other half of #17c, "1 seconds", went with the duration flag in #26.
 	duration := "indefinitely"
@@ -128,7 +236,57 @@ func (s *Stressy) startupMessage() string {
 		duration = "for " + s.timeout.String()
 	}
 
-	return fmt.Sprintf("Starting CPU stress test with %d %s %s", s.workers, workers, duration)
+	return fmt.Sprintf("Starting CPU stress test with %d %s %s", s.workers, plural(s.workers, "worker", "workers"), duration)
+}
+
+// summaryMessage is the line Run prints once every worker has drained: what the
+// run actually did, where the line above it says only why it stopped. Before
+// it, "Timer expired, shutting down..." was a finished run's last word — the
+// ellipsis promised something the process never printed, and an operator got no
+// confirmation the workers had worked and no number to compare across machines
+// (#49).
+//
+// That number is worth having. bcrypt at a fixed cost is constant work per
+// hash, so hashes per second is a crude but legitimate cross-node benchmark:
+// run the same Job on every node pool and a node hashing 30% slower is a
+// finding. It is also what makes an interrupted run legible, since a partial
+// count against a full timeout is the shape of a run that was cut short.
+//
+// The elapsed time is measured rather than the configured timeout echoed back:
+// Run waits for the hash each worker is inside, so a run ends up to one hash
+// past its deadline, and the rate has to divide by the time that passed. Built
+// as a string rather than printed in place, for the same reason startupMessage
+// is.
+func (s *Stressy) summaryMessage(hashes uint64, elapsed time.Duration) string {
+	// A run too short to measure is not a thing that happens — the clock is
+	// monotonic and one hash costs ~0.18s — but dividing by it would print
+	// "+Inf hashes/s" if it did.
+	var rate float64
+	if elapsed > 0 {
+		rate = float64(hashes) / elapsed.Seconds()
+	}
+
+	return fmt.Sprintf(
+		"Computed %d %s in %s (%.1f hashes/s, %d %s)",
+		hashes, plural(hashes, "hash", "hashes"),
+		// Rounded because the digits below a millisecond are noise against a
+		// hash that costs two hundred of them, and left to Duration to format
+		// so that the summary spells a duration the way the startup line does.
+		elapsed.Round(time.Millisecond),
+		rate,
+		s.workers, plural(s.workers, "worker", "workers"),
+	)
+}
+
+// plural picks the form of a noun that goes with n. The startup line opened
+// every default run with "1 workers" for the life of the project (#17c), and
+// the summary line has two counts of its own to get right.
+func plural[T int | uint64](n T, one, many string) string {
+	if n == 1 {
+		return one
+	}
+
+	return many
 }
 
 // validateConfig checks if the Stressy instance's configuration is valid.
@@ -147,22 +305,28 @@ func (s *Stressy) validateConfig() error {
 	return nil
 }
 
-// stressTestCPU performs CPU-intensive operations in a loop.
-// It runs in its own goroutine and continues until ctx is cancelled. The CPU
-// load is generated by repeatedly computing bcrypt hashes at hashCost, which
-// is where the whole of the load lives — bcrypt salts every call itself, so
-// nothing outside the hash has to vary for the work to be real, and a worker
-// returns within one hash of ctx being done.
-func (s *Stressy) stressTestCPU(ctx context.Context) {
+// stressTestCPU performs CPU-intensive operations in a loop and returns how
+// many hashes it computed. It runs in its own goroutine and continues until ctx
+// is cancelled. The CPU load is generated by repeatedly computing bcrypt hashes
+// at hashCost, which is where the whole of the load lives — bcrypt salts every
+// call itself, so nothing outside the hash has to vary for the work to be real,
+// and a worker returns within one hash of ctx being done.
+//
+// The count is returned rather than added to something shared: it is a local
+// until the worker is finished with it, so nothing about counting the work
+// touches the work (#49).
+func (s *Stressy) stressTestCPU(ctx context.Context) uint64 {
 	// Hoisted: formatting a timestamp per iteration was never the load this
 	// tool exists to generate, and a constant keeps the input well inside
 	// bcrypt's 72-byte limit rather than merely under it by accident.
 	password := []byte("stressy")
 
+	var hashes uint64
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return hashes
 		default:
 			// Unreachable in practice: the cost is a valid constant and the
 			// password is seven bytes, which leaves salt generation as the
@@ -170,6 +334,8 @@ func (s *Stressy) stressTestCPU(ctx context.Context) {
 			if _, err := bcrypt.GenerateFromPassword(password, hashCost); err != nil {
 				panic(err)
 			}
+
+			hashes++
 		}
 	}
 }

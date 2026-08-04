@@ -27,6 +27,30 @@ func newCmd(cfg *stressy.Cfg) *cobra.Command {
 
 All flags can be configured using environment variables with the STRESSY_ prefix.
 For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
+		// The README's usage block, carried into the binary. --help is where a
+		// user looks before they look for a repository, and in the container
+		// image it is the only documentation that ships: the image is FROM
+		// scratch, so there is no README beside the binary and no shell to read
+		// one with. It listed no examples at all, which left --help strictly
+		// less informative than the README it paraphrased (#27c).
+		//
+		// TestDocumentedInvocationsAreValid runs every line of this through the
+		// command, so an example naming a flag that no longer exists fails the
+		// build rather than the reader.
+		Example: `  # Load the machine until interrupted
+  stressy
+
+  # Four workers for five minutes
+  stressy -w 4 -t 5m
+
+  # A bare number is read as seconds, so pre-0.4 command lines keep working
+  stressy -t 60
+
+  # The same run, configured from the environment
+  STRESSY_WORKERS=4 STRESSY_TIMEOUT=5m stressy
+
+  # In a container the CPU limit sets the worker count
+  docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 30s`,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Version:           version,
 		// stressy takes no arguments beyond its flags. Without this cobra
@@ -86,10 +110,11 @@ For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
 // on a 64-core node under `limits.cpu: 2` it returns 64 and the run spends
 // itself being throttled instead of producing load — the containerised case
 // this tool is most often deployed into, and the case a naive default makes
-// worse rather than better. Since the go.mod language version reached 1.25
-// (#25) the runtime's own default already accounts for the quota, the CPU
-// affinity mask and the GOMAXPROCS environment variable, and what it yields is
-// exactly the number of workers that can run simultaneously. Passing 0 reads
+// worse rather than better. Since the go.mod language version reached 1.26 in
+// 0.4.0 — past the 1.25 that gates the behaviour (#25) — the runtime's own
+// default already accounts for the quota, the CPU affinity mask and the
+// GOMAXPROCS environment variable, and what it yields is exactly the number of
+// workers that can run simultaneously. Passing 0 reads
 // that value without setting it, so the runtime keeps updating it if the quota
 // changes.
 func defaultWorkers() int {

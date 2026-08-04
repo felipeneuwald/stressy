@@ -1,0 +1,134 @@
+# Contributing
+
+Thanks for taking an interest. stressy is small on purpose — one command, two
+flags, three direct dependencies — so most of what follows is about keeping it
+that way.
+
+## Getting set up
+
+You need Go at the version in [`go.mod`](go.mod) or newer. CI resolves
+`stable`, which is the newest Go release; the toolchain versions CI and the
+release pipeline use live in [`.github/versions.env`](.github/versions.env),
+which is the one file to edit if a tool needs pinning.
+
+```bash
+git clone https://github.com/felipeneuwald/stressy.git
+cd stressy
+go build
+./stressy -w 2 -t 5s
+```
+
+## The checks
+
+CI runs these on every push and pull request, and a red one blocks the merge.
+Running them locally first is faster than finding out from the pull request:
+
+```bash
+golangci-lint fmt --diff   # formatting, as a patch you can read
+golangci-lint run ./...    # lint
+go vet ./...               # not redundant: golangci-lint's uniq-by-line drops
+                           # a vet finding that shares a line with another
+go mod tidy -diff          # the only thing keeping go.mod tidy
+go mod verify
+go build ./...
+go test -race ./...
+```
+
+`golangci-lint` is pinned in `.github/versions.env`; install that version rather
+than the newest, or you may see findings CI will not.
+
+Two further jobs need no local equivalent in the normal case. `govulncheck`
+scans the dependency graph, and a release dry run (`goreleaser check` and
+`goreleaser release --snapshot --clean`) rehearses all twelve cross-compiles and
+both image builds. The dry run exists because `.github/workflows/goreleaser.yml`
+only fires on a `v*` tag, so before it a change to `.goreleaser.yaml` or the
+`Dockerfile` was validated for the first time at the moment it published. If you
+touch either of those files, expect that job to be the one that fails.
+
+## Tests
+
+Test what an operator can observe: the flags, the environment variables, the
+messages, the exit behaviour. `internal/stressy` is covered by tests that run
+the real goroutines, which is what `-race` in CI is there for.
+
+There is also a house rule worth knowing before you write documentation:
+
+> A claim the documentation makes about something else in the repository gets a
+> test holding the two together.
+
+This is not decoration. The README advertised six operating systems and two
+architectures for the whole life of the project while `.goreleaser.yaml` quietly
+excluded `windows/arm64`, and nobody found out, because a missing release
+artefact announces itself to no one — the release is green and the download list
+is one row shorter. So:
+
+- `release_test.go` reads the support matrix out of the README's own bullets and
+  fails if `.goreleaser.yaml` stops building it, or if an `ignore:` block
+  reappears.
+- `docs_test.go` runs every stressy invocation in the README and in `--help`
+  through the real command, so an example naming a flag that no longer exists is
+  a failing build; it also checks that every image the README tells people to
+  pull is one a release actually publishes, and that the containerised examples
+  are bounded.
+- `version_test.go` checks the `-X` target in `.goreleaser.yaml` against the
+  variable in `version.go`, because a `-X` naming a variable that does not exist
+  is dropped by the linker rather than failing the link — the two files
+  disagreeing would have been visible only in a published release.
+
+None of these needed a YAML or Markdown library. They know the one shape the
+file they read actually uses, which is the right trade in a repository that has
+spent two releases removing its config-parsing dependencies.
+
+## Commits, branches and pull requests
+
+Branches are named `type/short-description`: `fix/`, `feat/`, `docs/`, `deps/`,
+`refactor/`, `ci/`, `release/`.
+
+Commit subjects use the same prefixes and say what the change does, in the
+imperative and in lower case:
+
+```
+fix: publish the windows/arm64 binary the README promises
+deps: drop viper, reading the environment directly instead
+```
+
+`docs:`, `test:` and `ci:` are filtered out of generated release notes by
+`.goreleaser.yaml`, so use them for changes that a user of the binary would not
+notice, and one of the others for changes they would.
+
+One issue per pull request where you can. Reference the issue number in the
+changelog entry rather than only in the commit message — the changelog is what
+someone reads a year later.
+
+## The changelog
+
+Every change a user could notice gets an entry under `[Unreleased]` in
+[`CHANGELOG.md`](CHANGELOG.md), following [Keep a
+Changelog](https://keepachangelog.com/en/1.0.0/): `Added`, `Changed`,
+`Deprecated`, `Removed`, `Fixed`, `Security`.
+
+Entries here are longer than the usual one-liner, deliberately. Say what changed,
+what it was before, why it is better, and what it cost — with numbers where
+there are numbers, and the issue number in parentheses at the end. An entry that
+only says what changed leaves the next person to rediscover the reasoning, which
+is how a project ends up with decisions nobody can defend.
+
+## Releasing
+
+For maintainers:
+
+1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading. Check that what it claims is what ships — the 0.3.2 entry's
+   security claim did not, and that took eighteen months to notice.
+2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` builds the
+   twelve binaries, both images and the multi-arch manifest, and publishes them.
+3. To rehearse the publishing half — the part `--snapshot` cannot cover, since
+   it skips the registry login, the image push and the release creation — tag a
+   `vX.Y.Z-rcN` pre-release first. `prerelease: auto` and the
+   `{{ if not .Prerelease }}` guards keep it off `:latest` and off GitHub's
+   "Latest release".
+
+## Security
+
+Do not open a public issue for a vulnerability. [SECURITY.md](SECURITY.md) has
+the reporting channel and what is in scope.

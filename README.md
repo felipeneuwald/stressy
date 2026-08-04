@@ -28,6 +28,8 @@ container, on a node you would rather not install anything on.
 - Simple and lightweight CPU stress testing
 - Configurable number of parallel workers
 - Configurable test duration with support for indefinite testing
+- An end-of-run summary reporting hashes computed, elapsed time and rate
+- Exit codes that tell an interrupted run from a completed one
 - Environment variable configuration support
 - Available as both binary and Docker container
 - Cross-platform support (Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD)
@@ -89,6 +91,30 @@ export STRESSY_TIMEOUT=5m
 stressy
 ```
 
+### Output
+
+A run says what it is about to do, why it stopped, and what it did:
+
+```console
+$ stressy -w 4 -t 60s
+Starting CPU stress test with 4 workers for 60s
+Use --help for additional information
+Timer expired, shutting down...
+Computed 1324 hashes in 1m0.101s (22.0 hashes/s, 4 workers)
+```
+
+The summary is printed after every worker has finished the hash it was inside,
+so it doubles as the confirmation that the shutdown the line above it announced
+actually completed. Its elapsed time is measured rather than the `-t` you asked
+for echoed back: a worker can only notice the deadline between hashes, so a run
+ends up to one hash past it.
+
+The same line prints on the interrupted path, where a partial count against the
+timeout is what tells you the run was cut short. And because bcrypt at a fixed
+cost is constant work per hash, the rate is a crude but usable cross-node
+benchmark — run the same job on every node pool, and a node hashing 30% slower
+is a finding.
+
 ### Docker
 
 ```bash
@@ -122,6 +148,12 @@ for a Kubernetes `resources.limits.cpu`.
 A `Job` is the shape this fits: it starts one pod, waits for it to exit 0 and
 records the run as finished. That makes `-t` load-bearing rather than optional —
 a container that never terminates leaves the Job running forever.
+
+It also makes the [exit codes](#exit-codes) load-bearing. A pod that is evicted,
+preempted, drained or `kubectl delete`d part-way through its run exits 143, not
+0, so the Job records it as failed rather than `Complete` — which is what gives
+the `backoffLimit: 0` below something to bound, and what lets `kubectl get job`
+tell a pod that served its 60 seconds from one that was killed after 5.
 
 ```yaml
 apiVersion: batch/v1
@@ -193,8 +225,9 @@ else. Two consequences worth knowing before you deploy it:
   setting if the image would run as root — so with a root image every pod spec
   has to pin `runAsUser` too. This one does not.
 - There is no shell, so `docker exec` and `kubectl exec` into a running
-  container will not work. Everything stressy reports, it reports on stdout at
-  startup, and `--help` ships in the binary.
+  container will not work. Everything stressy reports, it reports on stdout —
+  the configuration at startup, the summary at the end — and `--help` ships in
+  the binary.
 
 `:latest` only ever points at a full release; pre-release tags such as
 `v0.4.0-rc1` publish under their own version tag and leave `:latest` alone.
@@ -205,6 +238,22 @@ else. Two consequences worth knowing before you deploy it:
 - `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. A bare number is read as seconds, so `-t 60` still means one minute. `0`, the default, runs until interrupted
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The run served the whole `--timeout` it was given |
+| `1` | The configuration was rejected — an unknown flag, an unparseable value, an unexpected argument — and no work was done |
+| `130` | SIGINT cut the run short, which is 128 + 2 and what Ctrl-C sends |
+| `143` | SIGTERM cut the run short, which is 128 + 15 and what `docker stop`, a `kubectl delete pod` and a node drain send |
+
+`128 + signum` is the convention `timeout(1)`, the shells and every process
+killed by a signal it does not handle already follow, so anything reading the
+status needs to know nothing about stressy to read it. An unbounded run (`-t 0`)
+is included: stopping one deliberately still reports 143, because from outside
+the process the `docker stop` you meant and the eviction you did not are the same
+event.
 
 ## Building from Source
 

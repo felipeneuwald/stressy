@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/felipeneuwald/stressy/internal/stressy"
@@ -40,6 +43,27 @@ const (
 // config do not match: they name no literal tag, and no documentation can refer
 // to one.
 var imageRef = regexp.MustCompile(regexp.QuoteMeta(imageRepo) + `:[\w.\-]+`)
+
+// summaryLine is the shape of the line a finished run prints (#49). The README
+// shows one in its sample session and TestExitCodes matches a real child
+// process's output against this same pattern, so the documented output and the
+// printed output cannot drift apart — the failure this whole file exists to
+// prevent, in the one place the documentation quotes stressy back to itself.
+var summaryLine = regexp.MustCompile(`^Computed (\d+) hash(?:es)? in \S+ \(\d+\.\d+ hashes/s, \d+ workers?\)$`)
+
+// exitCodeRow matches a row of the README's exit-code table: the code in
+// backticks in the first cell, what it means in the second. It knows the one
+// shape that table uses, like everything else in this file.
+var exitCodeRow = regexp.MustCompile("(?m)^\\|\\s*`(\\d+)`\\s*\\|\\s*(.+?)\\s*\\|\\s*$")
+
+// readmeSignalNames maps a signal a run stops on to the name the README has to
+// call it by. A signal added to stressy.ShutdownSignals without an entry here
+// fails the test rather than being quietly skipped, the same trade
+// release_test.go's readmeGOOS makes.
+var readmeSignalNames = map[os.Signal]string{
+	syscall.SIGINT:  "SIGINT",
+	syscall.SIGTERM: "SIGTERM",
+}
 
 // invocation is a stressy run lifted out of the documentation: where it was
 // written, the environment it is prefixed with, the flags it passes, and
@@ -106,6 +130,103 @@ func TestDocumentedImagesAreReleased(t *testing.T) {
 		if !slices.Contains(published, ref) {
 			t.Errorf("documentation names %s, which %s does not publish; it publishes %v", ref, releaseConfigPath, published)
 		}
+	}
+}
+
+// TestDocumentedExitCodes checks the README's exit-code table against the codes
+// a run actually produces. #48 is the reason there is a table at all: a
+// signal-interrupted run used to exit 0, so there was nothing to document, and
+// the Kubernetes section's "waits for it to exit 0 and records the run as
+// finished" quietly recorded an evicted pod as a completed one.
+//
+// The two directions are both worth checking. A signal handled here and
+// documented nowhere leaves an operator reading 143 out of `kubectl get pod`
+// with nothing to look it up in; a code documented here and produced by nothing
+// sends them looking for a failure mode that does not exist.
+func TestDocumentedExitCodes(t *testing.T) {
+	doc := strings.Join(lines(t, readmePath), "\n")
+
+	rows := exitCodeRow.FindAllStringSubmatch(doc, -1)
+	if rows == nil {
+		t.Fatalf("%s documents no exit codes, so a supervisor reading one has nothing to look it up in (#48)", readmePath)
+	}
+
+	documented := make(map[int]string, len(rows))
+	for _, row := range rows {
+		code, err := strconv.Atoi(row[1])
+		if err != nil {
+			t.Fatalf("%s: exit code %q is not a number: %v", readmePath, row[1], err)
+		}
+
+		documented[code] = row[2]
+	}
+
+	// The two codes that predate #48 and did not change: a completed run and a
+	// rejected configuration.
+	for _, code := range []int{0, 1} {
+		if _, ok := documented[code]; !ok {
+			t.Errorf("%s documents no exit code %d", readmePath, code)
+		}
+	}
+
+	signalled := make(map[int]bool)
+
+	for _, sig := range stressy.ShutdownSignals() {
+		name, ok := readmeSignalNames[sig]
+		if !ok {
+			t.Errorf("stressy stops on %v, which this test knows no README name for; add it to readmeSignalNames", sig)
+
+			continue
+		}
+
+		code := (&stressy.SignalError{Signal: sig}).ExitCode()
+		signalled[code] = true
+
+		meaning, ok := documented[code]
+		if !ok {
+			t.Errorf("a run ended by %s exits %d, which %s documents nowhere (#48)", name, code, readmePath)
+
+			continue
+		}
+
+		if !strings.Contains(meaning, name) {
+			t.Errorf("%s documents exit code %d as %q, which does not name %s", readmePath, code, meaning, name)
+		}
+	}
+
+	for code := range documented {
+		if code == 0 || code == 1 || signalled[code] {
+			continue
+		}
+
+		t.Errorf("%s documents exit code %d, which no run produces", readmePath, code)
+	}
+}
+
+// TestDocumentedRunOutput checks the sample session in the README against the
+// line a run prints. The summary line is new in #49 and carries measured
+// numbers, so what a sample can be held to is its shape — which is exactly what
+// drifts: a format changed in the code and left alone in the README goes on
+// looking correct, and it is the line an operator is told to compare across
+// nodes.
+func TestDocumentedRunOutput(t *testing.T) {
+	var found int
+
+	for i, line := range lines(t, readmePath) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Computed ") {
+			continue
+		}
+
+		found++
+
+		if !summaryLine.MatchString(trimmed) {
+			t.Errorf("%s:%d: %q is not the summary line a run prints (#49)", readmePath, i+1, trimmed)
+		}
+	}
+
+	if found == 0 {
+		t.Errorf("%s shows no end-of-run summary line, so nothing holds the documented output to the printed one (#49)", readmePath)
 	}
 }
 
@@ -187,7 +308,10 @@ func readmeInvocations(t *testing.T) []invocation {
 		}
 
 		switch lang {
-		case "bash":
+		// console as well as bash: the sample session showing what a run prints
+		// is a documented invocation like any other, and the flags in it are
+		// the ones a reader will copy.
+		case "bash", "console":
 			if inv, ok := sh.line(t, source, trimmed); ok {
 				found = append(found, inv)
 			}
@@ -256,6 +380,14 @@ func (sh *shell) line(t *testing.T, source, line string) (invocation, bool) {
 	t.Helper()
 
 	fields := strings.Fields(line)
+
+	// A console block writes its commands as `$ stressy …` and its output
+	// unprefixed, so the prompt comes off here and the output lines fall out
+	// below like any other line that runs nothing.
+	if len(fields) > 0 && fields[0] == "$" {
+		fields = fields[1:]
+	}
+
 	if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 		return invocation{}, false
 	}

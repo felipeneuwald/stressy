@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -85,8 +86,25 @@ For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
 
 			return bindEnv(c, envPrefix)
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return stressy.New(*cfg).Run()
+		RunE: func(c *cobra.Command, _ []string) error {
+			err := stressy.New(*cfg).Run()
+
+			// A signal-shortened run is reported by its exit code, not as an
+			// error: Run has already printed "Received signal, shutting
+			// down..." and the run summary, and cobra printing `Error: run
+			// interrupted by interrupt` under them would report one shutdown
+			// twice, the second time as a failure (#48).
+			//
+			// Silenced here rather than on the command literal, for the same
+			// reason SilenceUsage is set in PreRunE rather than there: every
+			// other error — a rejected environment variable, an invalid worker
+			// count — is still cobra's to print, and this is the one path where
+			// the message has already been delivered.
+			if _, ok := errors.AsType[*stressy.SignalError](err); ok {
+				c.SilenceErrors = true
+			}
+
+			return err
 		},
 	}
 
@@ -122,8 +140,22 @@ func defaultWorkers() int {
 }
 
 func main() {
-	if err := cmd.Execute(); err != nil {
-		// cobra has already printed the error.
-		os.Exit(1)
+	err := cmd.Execute()
+	if err == nil {
+		return
 	}
+
+	// A run a signal cut short exits 128 plus the signal number — 130 for
+	// SIGINT, 143 for SIGTERM — where it used to exit 0, indistinguishable from
+	// a run that served its whole `-t`. That distinction is the point: it is
+	// what makes a Kubernetes Job record an evicted pod as failed rather than
+	// Complete, and what gives the `backoffLimit: 0` in the README's manifest
+	// something to bound (#48). RunE has already silenced this one, so nothing
+	// has printed it.
+	if sig, ok := errors.AsType[*stressy.SignalError](err); ok {
+		os.Exit(sig.ExitCode())
+	}
+
+	// cobra has already printed the error.
+	os.Exit(1)
 }

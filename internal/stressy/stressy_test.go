@@ -2,6 +2,9 @@ package stressy
 
 import (
 	"context"
+	"os"
+	"slices"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -102,6 +105,137 @@ func TestStartupMessage(t *testing.T) {
 	}
 }
 
+// TestSummaryMessage covers #49: a finished run used to say nothing about what
+// it did, so there was no confirmation the workers had worked and no number to
+// compare one machine against another. Table-driven for the same reason
+// TestStartupMessage is — the counts in it are the ones that get spelled wrong,
+// and the line is built as a string precisely so they can be checked without
+// capturing os.Stdout.
+func TestSummaryMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     Cfg
+		hashes  uint64
+		elapsed time.Duration
+		want    string
+	}{
+		{
+			name:    "several workers",
+			cfg:     Cfg{Workers: 4, Timeout: time.Minute},
+			hashes:  1324,
+			elapsed: 60100 * time.Millisecond,
+			want:    "Computed 1324 hashes in 1m0.1s (22.0 hashes/s, 4 workers)",
+		},
+		{
+			// Both counts singular. The startup line shipped "1 workers" for
+			// the life of the project (#17c); this line has two chances at it.
+			name:    "one worker, one hash",
+			cfg:     Cfg{Workers: 1, Timeout: 200 * time.Millisecond},
+			hashes:  1,
+			elapsed: 200 * time.Millisecond,
+			want:    "Computed 1 hash in 200ms (5.0 hashes/s, 1 worker)",
+		},
+		{
+			// A signal landing before any worker finished its first hash. The
+			// zero is the report, not a reason to print nothing.
+			name:    "interrupted before the first hash",
+			cfg:     Cfg{Workers: 2},
+			hashes:  0,
+			elapsed: 3 * time.Millisecond,
+			want:    "Computed 0 hashes in 3ms (0.0 hashes/s, 2 workers)",
+		},
+		{
+			// The measured elapsed time carries whatever precision the clock
+			// gives it, which is noise against a hash costing ~0.18s.
+			name:    "elapsed time is rounded",
+			cfg:     Cfg{Workers: 1, Timeout: 2 * time.Second},
+			hashes:  11,
+			elapsed: 2*time.Second + 1499*time.Microsecond,
+			want:    "Computed 11 hashes in 2.001s (5.5 hashes/s, 1 worker)",
+		},
+		{
+			// Not reachable from Run, whose clock is monotonic, but the rate is
+			// a division and this is the divisor that would print "+Inf".
+			name:    "no time passed at all",
+			cfg:     Cfg{Workers: 1},
+			hashes:  0,
+			elapsed: 0,
+			want:    "Computed 0 hashes in 0s (0.0 hashes/s, 1 worker)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.cfg).summaryMessage(tt.hashes, tt.elapsed); got != tt.want {
+				t.Errorf("summaryMessage(%d, %s) = %q, want %q", tt.hashes, tt.elapsed, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSignalErrorExitCode pins the codes #48 chose, which are the whole of what
+// an operator's supervisor sees: `128 + signum` is what timeout(1), the shells
+// and every process killed by an unhandled signal report, so a Job or a script
+// can read an interrupted run without knowing anything about stressy.
+func TestSignalErrorExitCode(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want int
+	}{
+		{name: "SIGINT", sig: syscall.SIGINT, want: 130},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: 143},
+		// Nothing in shutdownSignals reaches this, on any platform releases
+		// build for. It is here because the alternative to a fallback is a
+		// panic during shutdown, which is the failure #14 spent an issue
+		// removing.
+		{name: "a signal with no number", sig: unnumberedSignal{}, want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &SignalError{Signal: tt.sig}
+
+			if got := err.ExitCode(); got != tt.want {
+				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
+			}
+			if err.Error() == "" {
+				t.Error("Error() = \"\", want it to name the signal")
+			}
+		})
+	}
+}
+
+// unnumberedSignal is an os.Signal that is not a syscall.Signal, which is the
+// only input ExitCode cannot map.
+type unnumberedSignal struct{}
+
+func (unnumberedSignal) String() string { return "unnumbered" }
+func (unnumberedSignal) Signal()        {}
+
+// TestShutdownSignals covers the list itself, which two things read: Run, to
+// register a handler, and TestDocumentedExitCodes, to check that the README
+// documents an exit code for every signal in it.
+func TestShutdownSignals(t *testing.T) {
+	got := ShutdownSignals()
+
+	for _, want := range []os.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		if !slices.Contains(got, want) {
+			t.Errorf("ShutdownSignals() = %v, want it to include %v", got, want)
+		}
+	}
+
+	// A copy, not the package's own slice: a caller that sorted or truncated
+	// the result would otherwise change which signals a run stops on.
+	if len(got) > 0 {
+		got[0] = nil
+
+		if ShutdownSignals()[0] == nil {
+			t.Error("ShutdownSignals() returns the package's own slice, want a copy")
+		}
+	}
+}
+
 // TestRunRejectsInvalidConfig covers Run's validation gate, which fails before
 // any worker goroutine is started.
 func TestRunRejectsInvalidConfig(t *testing.T) {
@@ -125,6 +259,11 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 		// the other lands while the worker is inside a hash — the case the old
 		// code could not survive, since that hash ran for a day.
 		ctx func(t *testing.T) context.Context
+		// wantNoHashes is set where the count the worker returns is decided
+		// rather than raced: a context already cancelled when the worker reads
+		// it buys no hashes, and the summary line for that run has to say 0
+		// rather than round the truth up to something that happened (#49).
+		wantNoHashes bool
 	}{
 		{
 			name: "cancelled before the worker starts",
@@ -134,6 +273,7 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 				t.Cleanup(cancel)
 				return ctx
 			},
+			wantNoHashes: true,
 		},
 		{
 			name: "cancelled while the worker is hashing",
@@ -147,14 +287,14 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				New(Cfg{Workers: 1}).stressTestCPU(tt.ctx(t))
-			}()
+			done := make(chan uint64, 1)
+			go func() { done <- New(Cfg{Workers: 1}).stressTestCPU(tt.ctx(t)) }()
 
 			select {
-			case <-done:
+			case hashes := <-done:
+				if tt.wantNoHashes && hashes != 0 {
+					t.Errorf("stressTestCPU() = %d, want 0 from an already-cancelled context", hashes)
+				}
 			case <-time.After(stopBudget):
 				t.Fatalf("stressTestCPU did not return within %s of cancellation", stopBudget)
 			}

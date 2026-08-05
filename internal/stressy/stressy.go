@@ -157,7 +157,10 @@ func (s *Stressy) Run() error {
 	defer signal.Stop(received)
 
 	fmt.Println(s.startupMessage())
-	fmt.Println("Use --help for additional information")
+
+	if hint := s.hintMessage(); hint != "" {
+		fmt.Println(hint)
+	}
 
 	// Started before the deadline is set, so the elapsed time the summary
 	// reports is never less than the timeout the operator asked for.
@@ -239,6 +242,35 @@ func (s *Stressy) startupMessage() string {
 	return fmt.Sprintf("Starting CPU stress test with %d %s %s", s.workers, plural(s.workers, "worker", "workers"), duration)
 }
 
+// hintMessage is the second line Run prints, when there is one worth printing.
+//
+// `Use --help for additional information` printed on every run, bounded ones
+// included — every scripted invocation and every Kubernetes Job log the
+// README's workflow produces, where the reader has already configured the run
+// and the pointer is noise. Meanwhile the hint an indefinite run actually needs
+// was absent: a bare `stressy` announced it would run "indefinitely" and never
+// said how to stop it (#52).
+//
+// So the line is now the indefinite run's alone, and leads with the stop
+// instruction. Both spellings of it are real: Ctrl-C is SIGINT at a terminal,
+// and SIGTERM is what a `docker stop`, a `kubectl delete pod` and a node drain
+// send — which is the case the terminal wording alone would leave out, and the
+// one this tool is most often deployed into. The `--help` pointer is kept here
+// and only here, because a bare `stressy` is where a user most plausibly has
+// not read anything, and in the `FROM scratch` image `--help` is the only
+// documentation that ships (#27c).
+//
+// Built as a string rather than printed in place, for the same reason
+// startupMessage is: a sibling function rather than a second line folded into
+// that one, so that each is checked for what it says on its own.
+func (s *Stressy) hintMessage() string {
+	if s.timeout > 0 {
+		return ""
+	}
+
+	return "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information"
+}
+
 // summaryMessage is the line Run prints once every worker has drained: what the
 // run actually did, where the line above it says only why it stopped. Before
 // it, "Timer expired, shutting down..." was a finished run's last word — the
@@ -289,20 +321,48 @@ func plural[T int | uint64](n T, one, many string) string {
 	return many
 }
 
-// validateConfig checks if the Stressy instance's configuration is valid.
-// Returns an error if:
-//   - workers is less than 1
-//   - timeout is negative
-func (s *Stressy) validateConfig() error {
-	if s.workers < 1 {
+// ValidateWorkers reports whether workers is a count a run can be started with.
+//
+// Exported, along with ValidateTimeout, because the command layer checks both
+// before the run — where it still knows whether a value came from `-w` or from
+// STRESSY_WORKERS, and can therefore name the one that produced it. This
+// package cannot: by the time it holds the value, the flag, the variable and
+// the default are one int (#51). The rule lives here so that the two callers
+// cannot come to disagree about it.
+func ValidateWorkers(workers int) error {
+	if workers < 1 {
 		return fmt.Errorf("workers must be 1 or greater")
 	}
 
-	if s.timeout < 0 {
+	return nil
+}
+
+// ValidateTimeout reports whether timeout is a duration a run can be started
+// with. Zero is valid and means indefinite; see ValidateWorkers for why this is
+// exported.
+func ValidateTimeout(timeout time.Duration) error {
+	if timeout < 0 {
 		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
 	}
 
 	return nil
+}
+
+// validateConfig checks if the Stressy instance's configuration is valid.
+// Returns an error if:
+//   - workers is less than 1
+//   - timeout is negative
+//
+// The command validates the same two settings before it gets here, so on that
+// path this is a backstop rather than the first line of defence. It is still
+// where the rules are enforced for every other caller of Run, and it runs
+// before a single worker starts.
+func (s *Stressy) validateConfig() error {
+	if err := ValidateWorkers(s.workers); err != nil {
+		return err
+	}
+
+	return ValidateTimeout(s.timeout)
 }
 
 // stressTestCPU performs CPU-intensive operations in a loop and returns how

@@ -182,37 +182,121 @@ func TestConfigResolution(t *testing.T) {
 	}
 }
 
+// malformedValues are values neither flag can parse, each with the hint its
+// rejection has to carry. A run is configured from the same two parsers however
+// it is spelled, so one table drives both the command-line path and the
+// environment one.
+var malformedValues = []struct {
+	name string
+	flag string
+	env  string
+	// other is a valid setting for the flag not under test, so that the value
+	// under test is the only thing wrong with the run.
+	other []string
+	value string
+	want  string
+}{
+	{
+		name:  "timeout",
+		flag:  "-t",
+		env:   "STRESSY_TIMEOUT",
+		other: []string{"-w", "1"},
+		value: "not-a-number",
+		want:  "want a duration such as 30s or 5m",
+	},
+	// #50: these three used to end in `strconv.ParseInt: parsing "abc":
+	// invalid syntax`, which names a Go standard library function and no valid
+	// value — a sharp inconsistency with the flag above, whose parser was
+	// hand-written precisely to avoid it.
+	{
+		name:  "workers",
+		flag:  "-w",
+		env:   "STRESSY_WORKERS",
+		other: []string{"-t", "100ms"},
+		value: "abc",
+		want:  "want a whole number",
+	},
+	{
+		name:  "workers, a float",
+		flag:  "-w",
+		env:   "STRESSY_WORKERS",
+		other: []string{"-t", "100ms"},
+		value: "2.0",
+		want:  "want a whole number",
+	},
+	{
+		name:  "workers, past what an int holds",
+		flag:  "-w",
+		env:   "STRESSY_WORKERS",
+		other: []string{"-t", "100ms"},
+		value: "99999999999999999999",
+		want:  "out of range",
+	},
+}
+
 // TestMalformedEnvValueIsRejected covers issue #10: a non-numeric
 // STRESSY_TIMEOUT used to be swallowed, leaving the flag at pflag's zero value
 // and turning a run the operator had bounded into an endless one, exit code 0.
+// Since #50 it also holds the message to saying what a valid value looks like,
+// on both variables rather than on the one that had a hand-written parser.
 func TestMalformedEnvValueIsRejected(t *testing.T) {
-	t.Setenv("STRESSY_TIMEOUT", "not-a-number")
+	for _, tt := range malformedValues {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.env, tt.value)
 
-	var cfg stressy.Cfg
-	cmd := newTestCmd(t, &cfg)
-	cmd.SetArgs(nil)
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+			cmd.SetArgs(tt.other)
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("Execute() error = nil, want the malformed value to be rejected")
-	}
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("Execute() with %s=%s error = nil, want the malformed value to be rejected", tt.env, tt.value)
+			}
 
-	// The message has to name the offending variable and value, or an operator
-	// staring at a failed run has nothing to go on.
-	if !strings.Contains(err.Error(), "STRESSY_TIMEOUT") || !strings.Contains(err.Error(), "not-a-number") {
-		t.Errorf("Execute() error = %q, want it to name the variable and the bad value", err)
+			// The message has to name the offending variable and value, or an
+			// operator staring at a failed run has nothing to go on — and it
+			// has to say what a valid value would have been, or they have
+			// nothing to correct it to.
+			checkMalformedMessage(t, err, tt.env, tt.value, tt.want)
+		})
 	}
 }
 
 // TestMalformedFlagValueIsRejected is the command-line counterpart: pflag
-// parses these itself, so this path reported the error even before #10.
+// parses these itself, so this path reported the error even before #10 — in
+// strconv's words for one of the two flags, which is what #50 is about.
 func TestMalformedFlagValueIsRejected(t *testing.T) {
-	var cfg stressy.Cfg
-	cmd := newTestCmd(t, &cfg)
-	cmd.SetArgs([]string{"-t", "not-a-number"})
+	for _, tt := range malformedValues {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+			cmd.SetArgs(append([]string{tt.flag, tt.value}, tt.other...))
 
-	if err := cmd.Execute(); err == nil {
-		t.Error("Execute() error = nil, want a parse error")
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("Execute(%s %s) error = nil, want a parse error", tt.flag, tt.value)
+			}
+
+			// pflag names the flag itself, in both spellings.
+			checkMalformedMessage(t, err, tt.flag, tt.value, tt.want)
+		})
+	}
+}
+
+// checkMalformedMessage holds a rejected value's message to the three things it
+// owes the reader: where the value came from, which value it was, and what a
+// valid one looks like — in words rather than in strconv's.
+func checkMalformedMessage(t *testing.T, err error, source, value, want string) {
+	t.Helper()
+
+	for _, fragment := range []string{source, value, want} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Errorf("error = %q, want it to contain %q", err, fragment)
+		}
+	}
+
+	if strings.Contains(err.Error(), "strconv") {
+		t.Errorf("error = %q, want no strconv internals in it (#50)", err)
 	}
 }
 
@@ -422,6 +506,22 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 			// one, and the message already names the variable and the value.
 			name:        "rejected environment variable",
 			env:         map[string]string{"STRESSY_TIMEOUT": "not-a-number"},
+			wantSilence: true,
+		},
+		{
+			// The case #17a is named after, and the reason parseWorkers checks
+			// no range: an out-of-range value that failed in pflag's parser
+			// would be a usage error by construction, and `-w 0` would answer a
+			// one-line mistake with a page of flags again. It fails in
+			// validateRanges instead, which runs after the line above.
+			name:        "out-of-range flag value",
+			args:        []string{"-w", "0"},
+			wantSilence: true,
+		},
+		{
+			name:        "out-of-range environment variable",
+			env:         map[string]string{"STRESSY_WORKERS": "0"},
+			args:        []string{"-t", "100ms"},
 			wantSilence: true,
 		},
 		{

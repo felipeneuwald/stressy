@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -102,6 +103,77 @@ func TestStartupMessage(t *testing.T) {
 				t.Errorf("startupMessage() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestHintMessage covers #52. `Use --help for additional information` printed
+// on every run, bounded ones included — every scripted invocation and every
+// Kubernetes Job log the README's workflow produces — while the hint an
+// indefinite run needs was missing: a bare `stressy` said it would run
+// "indefinitely" and never said how to stop it.
+func TestHintMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Cfg
+		want string
+	}{
+		// The line the issue asks for, in full. Its wording is what an operator
+		// reads, so it is pinned rather than probed: the stop instruction is a
+		// claim the output makes, and per the house rule it gets a test holding
+		// it to it.
+		{
+			name: "indefinite",
+			cfg:  Cfg{Workers: 1},
+			want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information",
+		},
+		{
+			name: "indefinite, several workers",
+			cfg:  Cfg{Workers: 4},
+			want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information",
+		},
+		// Nothing at all on a bounded run. The operator has already configured
+		// it, so the pointer is noise in the one place it is most often read
+		// from — a log, after the fact.
+		{name: "bounded", cfg: Cfg{Workers: 1, Timeout: 5 * time.Minute}},
+		{name: "bounded, sub-second", cfg: Cfg{Workers: 4, Timeout: 250 * time.Millisecond}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.cfg).hintMessage(); got != tt.want {
+				t.Errorf("hintMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHintMessageNamesEverySignalARunStopsOn keeps the stop instruction honest
+// against the list Run registers a handler for. A signal added to
+// shutdownSignals is a second way to stop a run, and a line that names one of
+// them and not the other tells an operator to reach for a shutdown that is not
+// the one their platform offers — the same class of gap as the exit code
+// documented nowhere in #48.
+func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
+	// Ctrl-C is how SIGINT is sent at a terminal, which is the spelling the
+	// line uses; anything else is named outright.
+	spellings := map[os.Signal]string{
+		syscall.SIGINT:  "Ctrl+C",
+		syscall.SIGTERM: "SIGTERM",
+	}
+
+	hint := New(Cfg{Workers: 1}).hintMessage()
+
+	for _, sig := range ShutdownSignals() {
+		want, ok := spellings[sig]
+		if !ok {
+			t.Errorf("a run stops on %v, which this test knows no wording for; add it to spellings and to hintMessage", sig)
+
+			continue
+		}
+
+		if !strings.Contains(hint, want) {
+			t.Errorf("hintMessage() = %q, want it to name %v as %q (#52)", hint, sig, want)
+		}
 	}
 }
 

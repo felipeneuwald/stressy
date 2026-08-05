@@ -21,12 +21,18 @@ import (
 // pass. The flags cobra registers for itself are skipped entirely; see
 // setByCobra.
 //
-// Returns an error if an environment value cannot be parsed into its flag's
-// type.
-func bindEnv(cmd *cobra.Command, prefix string) error {
+// Returns the variable each flag was filled from, keyed by flag name, and an
+// error if an environment value cannot be parsed into its flag's type. The map
+// is what lets a later check name the source of a value it rejects: setting a
+// flag from the environment goes through the same Set that records Changed, so
+// once this has run a value from STRESSY_WORKERS and one from `-w` are
+// indistinguishable (#51). See validateRanges.
+func bindEnv(cmd *cobra.Command, prefix string) (map[string]string, error) {
 	// VisitAll has no early exit, so record the first failure and skip the
 	// remaining flags rather than reporting the last one.
 	var err error
+
+	fromEnv := make(map[string]string)
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		if err != nil || f.Changed {
@@ -61,10 +67,14 @@ func bindEnv(cmd *cobra.Command, prefix string) error {
 		// deliberate default — turning a bounded run into an endless one.
 		if setErr := cmd.Flags().Set(f.Name, val); setErr != nil {
 			err = fmt.Errorf("invalid %v: %w", name, setErr)
+
+			return
 		}
+
+		fromEnv[f.Name] = name
 	})
 
-	return err
+	return fromEnv, err
 }
 
 // setByCobra reports whether cobra registered this flag itself rather than

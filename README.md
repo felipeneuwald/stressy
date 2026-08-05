@@ -98,7 +98,6 @@ A run says what it is about to do, why it stopped, and what it did:
 ```console
 $ stressy -w 4 -t 60s
 Starting CPU stress test with 4 workers for 60s
-Use --help for additional information
 Timer expired, shutting down...
 Computed 1324 hashes in 1m0.101s (22.0 hashes/s, 4 workers)
 ```
@@ -109,11 +108,22 @@ actually completed. Its elapsed time is measured rather than the `-t` you asked
 for echoed back: a worker can only notice the deadline between hashes, so a run
 ends up to one hash past it.
 
-The same line prints on the interrupted path, where a partial count against the
-timeout is what tells you the run was cut short. And because bcrypt at a fixed
-cost is constant work per hash, the rate is a crude but usable cross-node
-benchmark — run the same job on every node pool, and a node hashing 30% slower
-is a finding.
+A run with no `-t` has no deadline to announce, so it says how to stop it
+instead. The summary prints on that path too, so an interrupted run still
+reports what it managed before it was cut short:
+
+```console
+$ stressy -w 4
+Starting CPU stress test with 4 workers indefinitely
+Press Ctrl+C or send SIGTERM to stop. Use --help for additional information
+^C
+Received signal, shutting down...
+Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
+```
+
+Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
+but usable cross-node benchmark — run the same job on every node pool, and a
+node hashing 30% slower is a finding.
 
 ### Docker
 

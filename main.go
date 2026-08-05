@@ -84,7 +84,16 @@ For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
 			// followed by the whole help screen buries itself (#17a).
 			c.SilenceUsage = true
 
-			return bindEnv(c, envPrefix)
+			fromEnv, err := bindEnv(c, envPrefix)
+			if err != nil {
+				return err
+			}
+
+			// The range check runs here rather than only inside Run because
+			// this is the last point at which the source of a value is still
+			// known — which of `-w 0` and STRESSY_WORKERS=0 produced it, and so
+			// which of them the error should name (#51). See validateRanges.
+			return validateRanges(cfg, fromEnv)
 		},
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := stressy.New(*cfg).Run()
@@ -108,7 +117,11 @@ For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
 		},
 	}
 
-	root.Flags().IntVarP(&cfg.Workers, "workers", "w", defaultWorkers(), "number of parallel workers for CPU stress testing; the default is the number of CPUs this process can use")
+	// Var rather than IntVarP, for the same reason the flag below is not
+	// DurationVarP: the stock parser reports its failure as whatever strconv
+	// returned, which names a Go standard library function rather than a value
+	// the operator could have typed instead. See workersValue.
+	root.Flags().VarP(newWorkersValue(defaultWorkers(), &cfg.Workers), "workers", "w", "number of parallel workers for CPU stress testing; the default is the number of CPUs this process can use")
 
 	// Var rather than DurationVarP: the stock pflag duration type would reject
 	// the bare-seconds spelling this project has accepted since 0.1.0. See

@@ -36,6 +36,16 @@ const (
 	// starting with it is stressy's own and gets checked; anything else in a
 	// documented command line belongs to somebody else.
 	imageRepo = "ghcr.io/felipeneuwald/stressy"
+
+	// stopHint opens the line an indefinite run prints where a bounded one
+	// prints nothing, and helpPointer closes it. The README shows the whole
+	// line in its sample session and TestExitCodes matches a real child
+	// process's output against these same strings, so the documented output and
+	// the printed one cannot drift apart — which matters more here than
+	// anywhere else in this file, because the reader who needs the stop
+	// instruction is the one who has not read the README (#52).
+	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
+	helpPointer = "Use --help for additional information"
 )
 
 // imageRef matches a tagged reference to imageRepo. The tag pattern deliberately
@@ -227,6 +237,36 @@ func TestDocumentedRunOutput(t *testing.T) {
 
 	if found == 0 {
 		t.Errorf("%s shows no end-of-run summary line, so nothing holds the documented output to the printed one (#49)", readmePath)
+	}
+}
+
+// TestDocumentedStopHint covers the documentation half of #52. The `--help`
+// pointer used to print on every run, so the README's sample session showed it
+// under a bounded one; it now prints only where it can help, beside the
+// instruction that says how to stop the run it is printed for.
+//
+// Both directions are worth holding. A README that shows the pointer on its own
+// is quoting output no run produces any more, and a README that shows no stop
+// instruction at all has stopped documenting the one thing an indefinite run's
+// reader is looking for.
+func TestDocumentedStopHint(t *testing.T) {
+	var found int
+
+	for i, line := range lines(t, readmePath) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, helpPointer) {
+			continue
+		}
+
+		found++
+
+		if !strings.HasPrefix(trimmed, stopHint) {
+			t.Errorf("%s:%d: %q shows the --help pointer without the stop instruction that now precedes it; a run prints the two together or neither (#52)", readmePath, i+1, trimmed)
+		}
+	}
+
+	if found == 0 {
+		t.Errorf("%s shows no sample of an indefinite run's second line, so nothing holds the documented stop instruction to the printed one (#52)", readmePath)
 	}
 }
 

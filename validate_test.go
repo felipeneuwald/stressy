@@ -66,12 +66,15 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built: newTestCmd blanks the ambient
+			// STRESSY_* variables, and a case's own values have to survive
+			// that. See clearStressyEnv.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
-
-			var cfg stressy.Cfg
-			cmd := newTestCmd(t, &cfg)
 
 			var ran bool
 			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
@@ -101,10 +104,12 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 func TestOutOfRangeEnvironmentValueMatchesTheParseError(t *testing.T) {
 	for _, value := range []string{"abc", "0"} {
 		t.Run(value, func(t *testing.T) {
-			t.Setenv("STRESSY_WORKERS", value)
-
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built; see clearStressyEnv.
+			t.Setenv("STRESSY_WORKERS", value)
+
 			cmd.SetArgs([]string{"-t", "100ms"})
 
 			err := cmd.Execute()

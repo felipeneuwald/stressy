@@ -149,6 +149,19 @@ func TestExitCodes(t *testing.T) {
 			wantCode:   1,
 			wantStderr: "workers must be 1 or greater",
 		},
+		{
+			// The other way to exit 1, and the one reached by mistyping rather
+			// than by misconfiguring: cobra rejects an unknown flag while
+			// parsing, before PreRunE, where `-w 0` is rejected after it. Both
+			// exit 1, which is the point of pinning them together — the split
+			// #17a made is in what gets printed alongside, not in the status,
+			// and a supervisor reading only the code sees one failure class
+			// (#53).
+			name:       "a flag the command does not have",
+			args:       "--bogus",
+			wantCode:   1,
+			wantStderr: "unknown flag: --bogus",
+		},
 	}
 
 	for _, tt := range tests {

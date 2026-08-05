@@ -177,6 +177,42 @@ func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
 	}
 }
 
+// TestShutdownMessage covers #57. The two lines used to be printed in place,
+// inside the select that chooses between them, so every shutdown test in this
+// package executed one of them and none read either: swapping the two — a run
+// that hit its timer reporting a signal — left this package green, real workers
+// and -race included. The only thing that read either line was TestExitCodes,
+// which re-execs the binary and reads a child process's stdout, and which is
+// not built on Windows. A string that says which of two things happened should
+// not need a process to check.
+//
+// Which of them printed is what a log says about the run after the fact. "Timer
+// expired" is a run that served its `-t`; "Received signal" is one that
+// something outside the process ended — an eviction, a `docker stop`, a Ctrl-C
+// — which is the distinction the exit code carries too (#48), and a wrong line
+// here contradicts a right code there.
+func TestShutdownMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		// sig is what Run's select leaves behind: the signal that stopped the
+		// run, or nil where the deadline branch was taken.
+		sig  os.Signal
+		want string
+	}{
+		{name: "timer expired", want: "Timer expired, shutting down..."},
+		{name: "SIGINT", sig: syscall.SIGINT, want: "Received signal, shutting down..."},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: "Received signal, shutting down..."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shutdownMessage(tt.sig); got != tt.want {
+				t.Errorf("shutdownMessage(%v) = %q, want %q", tt.sig, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSummaryMessage covers #49: a finished run used to say nothing about what
 // it did, so there was no confirmation the workers had worked and no number to
 // compare one machine against another. Table-driven for the same reason

@@ -195,14 +195,15 @@ func (s *Stressy) Run() error {
 	var sig os.Signal
 	select {
 	case sig = <-received:
-		fmt.Println("Received signal, shutting down...")
 	case <-ctx.Done():
 		// Nothing else cancels ctx before this point — both cancel functions
 		// above are deferred — so reaching this branch means the deadline
 		// expired. With no timeout configured ctx has no deadline and the
-		// select waits on the signal alone.
-		fmt.Println("Timer expired, shutting down...")
+		// select waits on the signal alone. sig is left nil, which is what
+		// tells the two shutdowns apart from here on.
 	}
+
+	fmt.Println(shutdownMessage(sig))
 
 	// Whichever branch ran, the workers stop here: on the signal path this is
 	// what tells them, and on the timer path ctx is already done and this is a
@@ -269,6 +270,27 @@ func (s *Stressy) hintMessage() string {
 	}
 
 	return "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information"
+}
+
+// shutdownMessage is the line Run prints once the run is ending: why it is
+// ending. sig is the signal that stopped it, or nil where the timer expired —
+// the same distinction Run's select has just made, and the same one the exit
+// code is chosen from further out (#48).
+//
+// Built as a string rather than printed in place, for the same reason
+// startupMessage is: printed in place, the two branches were exercised by every
+// shutdown test in this package and read by none of them, so swapping the
+// messages left this package green. What objected was TestExitCodes, which
+// reads them off a real child process and is not built on Windows — a whole
+// process for a string. A run that hit its timer would otherwise tell everyone
+// reading pod logs it had been signalled: a line an operator reasonably treats
+// as evidence about eviction, saying the opposite of what happened (#57).
+func shutdownMessage(sig os.Signal) string {
+	if sig == nil {
+		return "Timer expired, shutting down..."
+	}
+
+	return "Received signal, shutting down..."
 }
 
 // summaryMessage is the line Run prints once every worker has drained: what the

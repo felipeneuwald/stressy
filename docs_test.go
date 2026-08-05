@@ -36,10 +36,24 @@ const (
 	// 5s`, the first thing a new contributor runs — in the one document that
 	// states the house rule requiring these tests (#59).
 	contributingPath = "CONTRIBUTING.md"
+	// SECURITY.md states when the vulnerability scan fires, which is a claim
+	// about .github/workflows/ci.yml (#61).
+	securityPath = "SECURITY.md"
 	// The Dockerfile is documentation's subject rather than documentation: the
 	// README's Kubernetes guidance is built on the UID it sets (#55).
 	dockerfilePath    = "Dockerfile"
 	releaseConfigPath = ".goreleaser.yaml"
+	ciWorkflowPath    = ".github/workflows/ci.yml"
+	changelogPath     = "CHANGELOG.md"
+
+	// unreleasedHeading opens the section of the changelog that has not
+	// shipped yet, which is the only section these checks read. See unreleased.
+	unreleasedHeading = "## [Unreleased]"
+
+	// stressyPkg is the package the changelog quotes a coverage figure for
+	// (#62), spelled the way the changelog spells it rather than as an import
+	// path; `go test` takes "./" + this.
+	stressyPkg = "internal/stressy"
 
 	// imageRepo is this project's published image, without a tag. A reference
 	// starting with it is stressy's own and gets checked; anything else in a
@@ -55,6 +69,12 @@ const (
 	// instruction is the one who has not read the README (#52).
 	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
 	helpPointer = "Use --help for additional information"
+
+	// precedenceRule is the answer to the question neither the README nor
+	// `--help` used to give: which of `-w 4` and STRESSY_WORKERS=8 wins, and
+	// what an empty variable does. One sentence, held in both places against
+	// this one copy of it (#64).
+	precedenceRule = "A flag given on the command line beats its environment variable, and an empty variable counts as unset"
 
 	// prereleaseGuard and guardEnd are what wrap a floating image tag in the
 	// release config. goreleaser skips an image or manifest whose template
@@ -87,6 +107,24 @@ var exitCodeRow = regexp.MustCompile("(?m)^\\|\\s*`(\\d+)`\\s*\\|\\s*(.+?)\\s*\\
 // capturing the shorthand and the long name out of the `-w, --workers` code
 // span that opens it.
 var documentedFlag = regexp.MustCompile("(?m)^- `-(\\w), --([\\w-]+)`:")
+
+// ciTriggerClaim matches the one shape CONTRIBUTING.md and SECURITY.md state
+// CI's trigger in, with the branch named or not: "on every push to main and
+// every pull request", and the drift #61 reported, "on every push and pull
+// request". The branch is optional in the pattern rather than required, so an
+// unqualified claim is matched and then judged, instead of slipping past as a
+// non-match — which is the failure mode that let the drift sit there.
+var ciTriggerClaim = regexp.MustCompile("on every push(?: to `?([\\w./-]+)`?)? and (?:every )?pull request")
+
+// internalSymbol matches a symbol-qualified reference to an internal package —
+// `internal/flag.Bind` — and deliberately not the package on its own, which the
+// #20 removal entry names legitimately in recording that it deleted it. The
+// `.Symbol` qualifier is the whole of the difference between a claim that
+// something exists and a record that it once did.
+//
+// A path is not a symbol: `internal/stressy/stressy.go` has a slash where this
+// needs a dot, so a file reference does not match.
+var internalSymbol = regexp.MustCompile(`internal/(\w+)\.([A-Za-z]\w*)`)
 
 // dockerUser matches the Dockerfile's numeric `USER uid:gid`, and documentedUID
 // the claim the README makes about it: the phrase UID/GID `65532`, wherever it
@@ -359,6 +397,69 @@ func TestDocumentedFlagsExist(t *testing.T) {
 	})
 }
 
+// TestPrecedenceIsDocumentedWhereUsersRead covers #64. Every flag can be set on
+// the command line or through a STRESSY_-prefixed variable, and the README
+// documented the names, the prefix and the value formats — but nothing a user
+// read said which source wins when both are set, or that an empty variable
+// counts as unset. Both rules are deliberate and both are tested; they were
+// just written down only in env.go's comments, where an operator deciding
+// whether `stressy -w 4` overrides an exported STRESSY_WORKERS=8 will never
+// look.
+//
+// The behaviour is held elsewhere already — main_test.go's "flags take
+// precedence over environment variables" and env_test.go's "empty environment
+// value is treated as unset" are what the sentence is allowed to claim, and it
+// claims nothing beyond them. What this holds is the documentation: that both
+// places a user reads say it, and say the same thing. Writing one sentence
+// twice is what makes that worth checking, and the copy that drifts is
+// predictably `--help`, which no one re-reads — while in the FROM scratch image
+// it is the only documentation there is.
+//
+// The flag list in the same text is held to bindEnv rather than to a literal,
+// which is the other half of #64's wording note. That sentence used to say "all
+// flags", true of cobra's own --help and --version until #47 stopped the
+// environment reaching them and false afterwards. Now a flag bindEnv fills has
+// to be named there the day it is registered, and one bindEnv skips must not be
+// offered.
+func TestPrecedenceIsDocumentedWhereUsersRead(t *testing.T) {
+	// --help and --version are registered by Execute rather than by newCmd,
+	// and bindEnv's own skip is keyed on the annotation that registration puts
+	// on them, so a command without them cannot reach the second half of this.
+	cmd := newCmd(&stressy.Cfg{})
+	cmd.InitDefaultHelpFlag()
+	cmd.InitDefaultVersionFlag()
+
+	long := collapse(cmd.Long)
+
+	for _, doc := range []struct{ name, text string }{
+		{"`stressy --help`", long},
+		{readmePath, unwrapped(t, readmePath)},
+	} {
+		if !strings.Contains(doc.text, precedenceRule) {
+			t.Errorf("%s does not say %q, so a user with both a flag and its variable set has to read env.go to find out which wins (#64)", doc.name, precedenceRule)
+		}
+	}
+
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		variable := envName(envPrefix, f.Name)
+
+		if setByCobra(f) {
+			// The other direction, and the one #47 was: offering a variable
+			// the binding refuses to read is worse than documenting nothing,
+			// because it reads as an invitation to set it.
+			if strings.Contains(long, variable) {
+				t.Errorf("`stressy --help` offers %s, which bindEnv skips because cobra registered --%s itself (#47)", variable, f.Name)
+			}
+
+			return
+		}
+
+		if !strings.Contains(long, "--"+f.Name) {
+			t.Errorf("`stressy --help` says which flags read the environment without naming --%s, which bindEnv fills from %s (#64)", f.Name, variable)
+		}
+	})
+}
+
 // TestImageRunsAsDocumentedUser holds the README's claim about the image's
 // identity to the Dockerfile that sets it. The Kubernetes manifest omits
 // `runAsUser` on purpose — "the image already runs as UID/GID `65532`" — so
@@ -449,6 +550,160 @@ func TestFloatingTagsAreGuardedAgainstPrereleases(t *testing.T) {
 	if found == 0 {
 		t.Errorf("%s names no literal %s tag, so this test is checking nothing: either the floating tags are gone, or they are written in a shape it cannot see", releaseConfigPath, imageRepo)
 	}
+}
+
+// TestDocumentedCITriggerMatchesTheWorkflow covers #61. CONTRIBUTING.md told a
+// contributor that "CI runs these on every push and pull request" and
+// SECURITY.md that "`govulncheck` runs in CI on every push and pull request",
+// where ci.yml filters its push trigger to main — so someone pushing a topic
+// branch and waiting for the feedback those sentences promised got no run at
+// all, and the vulnerability scan fired less often than the security policy
+// said it did.
+//
+// Worth a test rather than a careful reading for the usual reason: a workflow
+// trigger is edited in a file neither document is open beside, and narrowing
+// one produces no failure anywhere — the sentence describing it simply stops
+// being true. The two documents are read together because they made the same
+// claim about the same file and drifted the same way.
+//
+// Both directions, like TestDocumentedExitCodes. A claim that names no branch
+// where the workflow filters to one is the drift this fixes; a claim that names
+// one where the workflow filters to nothing is the same error inverted, and
+// would send a contributor looking for a run that fired on their branch all
+// along.
+func TestDocumentedCITriggerMatchesTheWorkflow(t *testing.T) {
+	branches, onPullRequest := ciTrigger(t)
+
+	// The "and every pull request" half is a claim too, and it is the half
+	// that makes the branch filter tolerable: with it gone, a topic branch
+	// would get no CI at any point.
+	if !onPullRequest {
+		t.Fatalf("%s has no `pull_request:` trigger, so both documents are wrong about the half of the claim that lets a contributor see CI at all", ciWorkflowPath)
+	}
+
+	// One branch is what a sentence in prose can name without listing. A
+	// filter naming two fails here rather than being approximated by whichever
+	// of them the documents happen to mention — the same trade release_test.go
+	// makes with an unknown platform name.
+	if len(branches) > 1 {
+		t.Fatalf("%s filters the push trigger to %v, which neither document can state as a single branch; reword both and teach this test the new shape", ciWorkflowPath, branches)
+	}
+
+	for _, path := range []string{contributingPath, securityPath} {
+		t.Run(path, func(t *testing.T) {
+			claims := ciTriggerClaim.FindAllStringSubmatch(unwrapped(t, path), -1)
+			if claims == nil {
+				t.Fatalf("%s no longer says when CI fires, so nothing holds the two documents to %s (#61)", path, ciWorkflowPath)
+			}
+
+			for _, claim := range claims {
+				named := claim[1]
+
+				switch {
+				case len(branches) == 0:
+					if named != "" {
+						t.Errorf("%s says %q, where %s filters the push trigger to no branch at all", path, claim[0], ciWorkflowPath)
+					}
+				case named == "":
+					t.Errorf("%s says %q, where %s runs the push trigger only on %s — a contributor pushing a topic branch with no pull request open gets no run at all (#61)", path, claim[0], ciWorkflowPath, branches[0])
+				case named != branches[0]:
+					t.Errorf("%s says %q, where %s filters the push trigger to %s", path, claim[0], ciWorkflowPath, branches[0])
+				}
+			}
+		})
+	}
+}
+
+// TestUnreleasedNamesPackagesThatExist covers #63. The viper-removal entry said
+// "`internal/flag.Bind` now takes an environment prefix and reads
+// `os.LookupEnv` itself" in the present tense, and the entry two bullets below
+// it recorded deleting the whole `internal/flag` package. Both ship in the same
+// release, so the released changelog would have stated as fact a function that
+// does not exist in the release it describes, and a reader following the first
+// entry would have gone looking for it and found nothing.
+//
+// That is the shape this catches: a Keep-a-Changelog entry describes the
+// release it ships in, not the intermediate state of the branch that built it,
+// and an entry written mid-branch is written against a repository that has not
+// finished changing. Only symbol-qualified references are read, since naming a
+// package in its own removal record is what a removal record is for.
+//
+// The check is on the package rather than the symbol. What it costs is a
+// renamed function inside a package that still exists; what it buys is that it
+// needs no parse of the source and cannot disagree with one.
+func TestUnreleasedNamesPackagesThatExist(t *testing.T) {
+	// The steady state of this test is finding nothing — the section names no
+	// such symbol once #63 is fixed — so a regexp that quietly stopped
+	// matching would leave it passing forever. This is what says it still
+	// recognises the reference it was written for.
+	const drift = "`internal/flag.Bind` now takes an environment prefix"
+
+	if found := internalSymbol.FindStringSubmatch(drift); found == nil || found[1] != "flag" {
+		t.Fatalf("internalSymbol no longer reads %q as a reference to internal/flag, so this test would pass on the drift it exists to catch (#63)", drift)
+	}
+
+	for i, line := range unreleased(t) {
+		for _, ref := range internalSymbol.FindAllStringSubmatch(line, -1) {
+			pkg := "internal/" + ref[1]
+
+			info, err := os.Stat(pkg)
+			if err == nil && info.IsDir() {
+				continue
+			}
+
+			t.Errorf("%s:%d describes %s.%s in the present tense, where %s does not exist at HEAD — an entry describes the release it ships in, not the branch that built it (#63)", changelogPath, i+1, pkg, ref[2], pkg)
+		}
+	}
+}
+
+// ciTrigger reads the `on:` block of the CI workflow: the branches its push
+// trigger is filtered to, empty where it is unfiltered, and whether it runs on
+// pull requests at all.
+//
+// Not a YAML parser, for the reason nothing else in this file is one either. It
+// knows the one shape this block uses — a trigger alone on its line at one
+// level of indentation, its settings at the next — and tracks which trigger it
+// is inside rather than taking the first `branches:` it finds, so a filter
+// added to `pull_request:` is not read as the push trigger's.
+func ciTrigger(t *testing.T) (branches []string, onPullRequest bool) {
+	t.Helper()
+
+	src := lines(t, ciWorkflowPath)
+
+	start := slices.IndexFunc(src, func(line string) bool { return line == "on:" })
+	if start < 0 {
+		t.Fatalf("%s has no top-level `on:` block, so this test cannot tell what CI fires on", ciWorkflowPath)
+	}
+
+	var trigger string
+
+	for i, line := range src[start+1:] {
+		code := withoutComment(line)
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+
+		// Back at the left margin is the end of the block: the next top-level
+		// key, `concurrency:` today.
+		if !strings.HasPrefix(code, " ") {
+			break
+		}
+
+		source := fmt.Sprintf("%s:%d", ciWorkflowPath, start+i+2)
+
+		if name, ok := strings.CutPrefix(code, "  "); ok && !strings.HasPrefix(name, " ") {
+			trigger = strings.TrimSuffix(strings.TrimSpace(name), ":")
+			onPullRequest = onPullRequest || trigger == "pull_request"
+
+			continue
+		}
+
+		if list, ok := strings.CutPrefix(strings.TrimSpace(code), "branches:"); ok && trigger == "push" {
+			branches = flowList(t, source, list)
+		}
+	}
+
+	return branches, onPullRequest
 }
 
 // run executes the invocation against the real command, with the stress test
@@ -679,13 +934,63 @@ func dockerRun(t *testing.T, source string, fields []string) (invocation, bool) 
 	return invocation{}, false
 }
 
-// flowList reads the `["-t", "60s"]` form the Job manifest uses for args.
+// collapse returns text as one line, every run of whitespace reduced to a
+// single space.
+//
+// Everything it is used on is hard wrapped — both documents, and the `--help`
+// text itself — and a sentence that straddles a line break matches nothing in
+// the line-at-a-time reading the rest of this file does. What collapsing costs
+// is the line number in a failure message, which the quoted claim replaces.
+func collapse(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// unwrapped returns a whole document as one collapsed line.
+func unwrapped(t *testing.T, path string) string {
+	t.Helper()
+
+	return collapse(strings.Join(lines(t, path), " "))
+}
+
+// unreleased returns the changelog's lines with everything outside the
+// `## [Unreleased]` section blanked out, so that an index into the result is
+// still the line number in the file.
+//
+// Scoping to that section is what keeps released history out of these checks. A
+// released entry records what was true when it shipped — the state of a branch
+// mid-release, a figure measured at the tag — and holding it to today's
+// repository would fail the build for saying what a past release did, which is
+// the one thing a changelog is for. An entry moving under a version heading
+// therefore stops being checked, which is deliberate rather than a gap: the
+// last chance to check it is the release itself, where CONTRIBUTING's first
+// release step already asks whether what the section claims is what ships.
+func unreleased(t *testing.T) []string {
+	t.Helper()
+
+	src := lines(t, changelogPath)
+
+	start := slices.Index(src, unreleasedHeading)
+	if start < 0 {
+		t.Fatalf("%s has no %q heading, so there is no pending section for these checks to read (#62, #63)", changelogPath, unreleasedHeading)
+	}
+
+	section := make([]string, len(src))
+
+	for i := start + 1; i < len(src) && !strings.HasPrefix(src[i], "## "); i++ {
+		section[i] = src[i]
+	}
+
+	return section
+}
+
+// flowList reads the `["-t", "60s"]` form the Job manifest uses for args, and
+// the `[main]` one ci.yml uses for the push trigger's branch filter.
 func flowList(t *testing.T, source, list string) []string {
 	t.Helper()
 
 	list = strings.TrimSpace(list)
 	if !strings.HasPrefix(list, "[") || !strings.HasSuffix(list, "]") {
-		t.Fatalf(`%s: args is %s, which this test only reads in the flow form ["-t", "60s"]`, source, list)
+		t.Fatalf(`%s: %s is not the flow form ["a", "b"] this test reads`, source, list)
 	}
 
 	var args []string

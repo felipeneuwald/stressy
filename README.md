@@ -91,6 +91,10 @@ export STRESSY_TIMEOUT=5m
 stressy
 ```
 
+A flag given on the command line beats its environment variable, and an empty
+variable counts as unset — so `STRESSY_WORKERS=${WORKERS}` with `WORKERS`
+undefined leaves the default in place rather than failing the run.
+
 ### Output
 
 A run says what it is about to do, why it stopped, and what it did:

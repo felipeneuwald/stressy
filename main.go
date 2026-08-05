@@ -24,10 +24,26 @@ func newCmd(cfg *stressy.Cfg) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "stressy",
 		Short: "Stressy is a simple tool to perform CPU stress tests",
+		// Not "all flags", which this said and #47 made false: cobra registers
+		// --help and --version itself and bindEnv skips both, so naming the
+		// two configuration flags is the only spelling that describes what is
+		// actually configurable.
+		//
+		// Which of a flag and its variable wins, and what an empty variable
+		// does, were written down only in env.go's comments — where an
+		// operator deciding whether `-w 4` beats an exported
+		// STRESSY_WORKERS=8 will never look. They are here as well as in the
+		// README because in the FROM scratch image --help is the only
+		// documentation that ships (#64).
+		//
+		// TestPrecedenceIsDocumentedWhereUsersRead holds this text and the
+		// README to each other, and to the flags bindEnv actually reads.
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
-All flags can be configured using environment variables with the STRESSY_ prefix.
-For example: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m.`,
+The --workers and --timeout flags can each be set from the environment with the
+STRESSY_ prefix: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m. A flag given on the
+command line beats its environment variable, and an empty variable counts as
+unset.`,
 		// The README's usage block, carried into the binary. --help is where a
 		// user looks before they look for a repository, and in the container
 		// image it is the only documentation that ships: the image is FROM

@@ -20,8 +20,10 @@ go build
 
 ## The checks
 
-CI runs these on every push and pull request, and a red one blocks the merge.
-Running them locally first is faster than finding out from the pull request:
+CI runs these on every push to main and every pull request, and a red one
+blocks the merge — a push to a topic branch with no pull request open runs
+nothing. Running them locally first is faster than finding out from the pull
+request:
 
 ```bash
 golangci-lint fmt --diff   # formatting, as a patch you can read

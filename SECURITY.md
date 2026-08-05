@@ -44,9 +44,9 @@ So the realistic surface is not the program logic. It is:
 - **The dependency graph.** Three direct dependencies — cobra, pflag and
   `golang.org/x/crypto` — plus cobra's `mousetrap`. Most of this project's
   security history is exactly this: `x/crypto` advisories arriving through
-  dependabot. `govulncheck` runs in CI on every push and pull request, and
-  dependabot checks Go modules and GitHub Actions weekly, so each of those pull
-  requests re-runs the scan even during a quiet period.
+  dependabot. `govulncheck` runs in CI on every push to main and every pull
+  request, and dependabot checks Go modules and GitHub Actions weekly, so each
+  of those pull requests re-runs the scan even during a quiet period.
 - **The published images and binaries.** Built by
   [`.github/workflows/goreleaser.yml`](.github/workflows/goreleaser.yml) from a
   tag, reproducibly (`-trimpath`, artefact mtimes pinned to the commit), with a

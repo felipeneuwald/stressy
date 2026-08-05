@@ -74,6 +74,11 @@ func TestExitCodes(t *testing.T) {
 		// wantHashes requires the summary to report work actually done, which
 		// only a run long enough to finish a hash can promise.
 		wantHashes bool
+		// wantProgress requires the --report heartbeat on stdout, and its
+		// absence requires silence: every case here but one passes no
+		// --report, so leaving this unset is the assertion that a run nobody
+		// asked prints what it always has (#70).
+		wantProgress bool
 		// wantStderr is a fragment cobra must have printed; empty means the run
 		// must not have reported an error at all.
 		wantStderr string
@@ -96,6 +101,24 @@ func TestExitCodes(t *testing.T) {
 			// the Job log the README's Kubernetes workflow produces (#52).
 			wantNoLines: []string{helpPointer},
 			wantHashes:  true,
+		},
+		{
+			// #70 through a real process, which is the level the issue is
+			// about: what `kubectl logs` shows while a run is still happening,
+			// on an image with no shell to exec into. Two seconds at a 250ms
+			// interval leaves room for several ticks; one is what is asserted,
+			// because how many arrive is the scheduler's business and that any
+			// arrive is stressy's.
+			name:     "a run that reports its progress",
+			args:     "-w 1 -t 2s --report 250ms",
+			wantCode: 0,
+			wantLines: []string{
+				"Starting CPU stress test with 1 worker for 2s",
+				"Timer expired, shutting down...",
+				"Computed ",
+			},
+			wantHashes:   true,
+			wantProgress: true,
 		},
 		{
 			// The other half of #52, and the only place it can be seen printed
@@ -196,6 +219,7 @@ func TestExitCodes(t *testing.T) {
 			}
 
 			checkSummary(t, tt.args, stdout, tt.wantHashes)
+			checkProgress(t, tt.args, stdout, tt.wantProgress)
 		})
 	}
 }
@@ -357,6 +381,55 @@ func checkSummary(t *testing.T, args string, stdout []string, wantHashes bool) {
 		}
 
 		return
+	}
+}
+
+// checkProgress holds the --report heartbeat to the shape docs_test.go checks
+// the README's sample against, and to the place in the output it has to appear:
+// between the startup line and the shutdown line, which is the gap #70 is named
+// after. A line printed after the run had stopped would tell an operator
+// watching the log nothing the summary does not.
+//
+// The negative case is the one worth having here rather than only in the engine
+// package. Every other run in this table passes no --report, so this is what
+// says a real process — the binary an operator actually deploys, not a Run call
+// inside a test — prints the three lines it has always printed unless somebody
+// asks for more.
+func checkProgress(t *testing.T, args string, stdout []string, want bool) {
+	t.Helper()
+
+	var (
+		progress int
+		last     = -1
+		shutdown = -1
+	)
+
+	for i, line := range stdout {
+		switch {
+		case progressLine.MatchString(line):
+			progress++
+			last = i
+		case strings.HasSuffix(line, ", shutting down..."):
+			shutdown = i
+		}
+	}
+
+	if !want {
+		if progress > 0 {
+			t.Errorf("`stressy %s` printed:\n%s\nwant no progress line from a run that asked for none (#70)", args, strings.Join(stdout, "\n"))
+		}
+
+		return
+	}
+
+	if progress == 0 {
+		t.Errorf("`stressy %s` printed:\n%s\nwant a progress line in the shape %s documents (#70)", args, strings.Join(stdout, "\n"), readmePath)
+
+		return
+	}
+
+	if shutdown < 0 || last > shutdown {
+		t.Errorf("`stressy %s` printed:\n%s\nwant every progress line before the shutdown line (#70)", args, strings.Join(stdout, "\n"))
 	}
 }
 

@@ -33,10 +33,10 @@ alone.
 
 ## What the attack surface actually is
 
-Being specific about this saves everyone time. stressy takes two flags and two
-environment variables, hashes a seven-byte constant in a loop, and prints two
-lines. It opens no network sockets, reads no configuration file, parses no
-untrusted input and writes nothing to disk. The binary is static, built
+Being specific about this saves everyone time. stressy takes three flags and
+three environment variables, hashes a seven-byte constant in a loop, and prints
+a handful of lines to stdout. It opens no network sockets, reads no
+configuration file, parses no untrusted input and writes nothing to disk. The binary is static, built
 `CGO_ENABLED=0`, and the image runs as UID/GID `65532` with no shell in it.
 
 So the realistic surface is not the program logic. It is:

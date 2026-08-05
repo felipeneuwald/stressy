@@ -29,6 +29,7 @@ container, on a node you would rather not install anything on.
 - Configurable number of parallel workers
 - Configurable test duration with support for indefinite testing
 - An end-of-run summary reporting hashes computed, elapsed time and rate
+- An optional progress line on an interval, for runs long enough to check on
 - Exit codes that tell an interrupted run from a completed one
 - Environment variable configuration support
 - Available as both binary and Docker container
@@ -85,6 +86,11 @@ stressy -t 60
 # Combine workers and timeout
 stressy -w 4 -t 5m
 
+# Print a progress line every 30 seconds
+stressy -t 30m -r 30s
+# or
+stressy --timeout 30m --report 30s
+
 # Using environment variables
 export STRESSY_WORKERS=4
 export STRESSY_TIMEOUT=5m
@@ -128,6 +134,37 @@ Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
 Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
 but usable cross-node benchmark — run the same job on every node pool, and a
 node hashing 30% slower is a finding.
+
+Between those lines a run says nothing, however long it runs. On a half-hour
+Kubernetes Job that means `kubectl logs` shows one line for the twenty-nine
+minutes the pod is working, and the other two only once it has stopped. `-r,
+--report` fills the gap with a progress line on an interval:
+
+```console
+$ stressy -w 4 -t 5m --report 1m
+Starting CPU stress test with 4 workers for 5m0s
+1m0.001s elapsed, 1320 hashes, 22.0 hashes/s
+2m0.001s elapsed, 2640 hashes, 22.0 hashes/s
+3m0.001s elapsed, 3960 hashes, 22.0 hashes/s
+4m0.001s elapsed, 5280 hashes, 22.0 hashes/s
+5m0.001s elapsed, 6596 hashes, 22.0 hashes/s
+Timer expired, shutting down...
+Computed 6600 hashes in 5m0.093s (22.0 hashes/s, 4 workers)
+```
+
+It is off unless you ask for it: a run given no `--report` prints what the two
+sessions above show and nothing more. Two things about the numbers, both of
+which matter if you are watching the line rather than reading it afterwards. The
+rate is cumulative — every hash since the run started over the whole elapsed
+time, which is the same figure the summary ends with, so the last progress line
+and the summary agree rather than differing by a window you cannot see. And the
+elapsed time is measured at the moment the line is printed rather than rounded
+to the interval, so a tick a starved process delivered late says so.
+
+The last tick and the deadline fall due together and race, so the line above
+`Timer expired` may or may not appear; its count is short of the summary's
+either way, because the workers each finish the hash they are inside after the
+deadline.
 
 ### Docker
 
@@ -209,6 +246,20 @@ kubectl logs -l batch.kubernetes.io/job-name=stressy
 kubectl delete job stressy
 ```
 
+That `kubectl logs` is the whole of what you can see from outside: the image is
+`FROM scratch`, so there is no shell to `kubectl exec` in with. On a run long
+enough to check on — a soak test, a load test driving an HPA — the pod's three
+lines arrive at the very beginning and the very end, and nothing in between says
+whether it is still working. `--report` is what gives the log something to show
+while the run is happening:
+
+```yaml
+containers:
+  - name: stressy
+    image: ghcr.io/felipeneuwald/stressy:latest
+    args: ["-t", "30m", "--report", "1m"]
+```
+
 There is no `-w` in that manifest on purpose. `limits.cpu: "2"` is a cgroup
 quota, the worker count is read from the quota, and the pod starts two workers —
 so the load follows the limit, and raising one raises the other. Setting `-w`
@@ -240,8 +291,10 @@ else. Two consequences worth knowing before you deploy it:
   has to pin `runAsUser` too. This one does not.
 - There is no shell, so `docker exec` and `kubectl exec` into a running
   container will not work. Everything stressy reports, it reports on stdout —
-  the configuration at startup, the summary at the end — and `--help` ships in
-  the binary.
+  the configuration at startup, the summary at the end, and a progress line on
+  an interval if you pass `--report` — and `--help` ships in the binary.
+  `--report` exists because of this: with no shell to exec in with, stdout is
+  the only in-band window into a container that is still running.
 
 `:latest` only ever points at a full release; pre-release tags such as
 `v0.4.0-rc1` publish under their own version tag and leave `:latest` alone.
@@ -250,6 +303,7 @@ else. Two consequences worth knowing before you deploy it:
 
 - `-w, --workers`: Number of parallel workers (must be 1 or greater). Defaults to the number of CPUs this process can use — the host's core count, narrowed by the CPU affinity mask, by a cgroup CPU limit if there is one, and by the `GOMAXPROCS` environment variable if it is set. `stressy --help` prints the number for the machine you run it on
 - `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. A bare number is read as seconds, so `-t 60` still means one minute. `0`, the default, runs until interrupted
+- `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does, a bare number included. `0`, the default, prints none, which is what a run has always done
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information
 

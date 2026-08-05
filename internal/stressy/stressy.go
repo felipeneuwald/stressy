@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -90,12 +91,14 @@ func (e *SignalError) ExitCode() int {
 type Stressy struct {
 	workers int           // number of parallel worker goroutines
 	timeout time.Duration // how long to run (0 for indefinite)
+	report  time.Duration // how often to print a progress line (0 for never)
 }
 
 // Cfg holds the configuration parameters for creating a new Stressy instance.
 type Cfg struct {
 	Workers int           // number of parallel worker goroutines
 	Timeout time.Duration // how long to run (0 for indefinite)
+	Report  time.Duration // how often to print a progress line (0 for never)
 }
 
 // New creates and returns a new Stressy instance with the given configuration.
@@ -104,6 +107,7 @@ func New(c Cfg) *Stressy {
 	return &Stressy{
 		workers: c.Workers,
 		timeout: c.Timeout,
+		report:  c.Report,
 	}
 }
 
@@ -119,6 +123,10 @@ func New(c Cfg) *Stressy {
 //   - The timeout duration is reached (if configured)
 //   - An interrupt signal is received
 //
+// While it waits, a run given a report interval prints a progress line on every
+// tick. Without one it prints nothing at all between the startup lines and the
+// shutdown line, however long the run (#70).
+//
 // Run then waits for every worker to finish the hash it is on, so it returns
 // up to one hash after the shutdown was triggered, and prints what the run did
 // once they have all drained.
@@ -131,12 +139,12 @@ func (s *Stressy) Run() error {
 		return err
 	}
 
-	// Both shutdown triggers meet in one select below, over one context that
-	// only this function cancels. That is the shape #14 left behind: two
-	// hand-rolled `close(s.done)` calls, one per trigger, with nothing
-	// coordinating them, so a signal arriving as the timer expired closed the
-	// same channel twice and panicked the process. A select takes exactly one
-	// branch however many triggers fire.
+	// Both shutdown triggers meet in one select — waitForShutdown's, below —
+	// over one context that only this function cancels. That is the shape #14
+	// left behind: two hand-rolled `close(s.done)` calls, one per trigger, with
+	// nothing coordinating them, so a signal arriving as the timer expired
+	// closed the same channel twice and panicked the process. A select takes
+	// exactly one branch however many triggers fire.
 	//
 	// The channel is what signal.NotifyContext used to be. NotifyContext
 	// cancels on either signal without saying which one fired, and the exit
@@ -177,31 +185,32 @@ func (s *Stressy) Run() error {
 
 	var wg sync.WaitGroup
 
-	// One slot per worker, written once by the worker that owns it and read
-	// only after wg.Wait(), which is what orders the two. Per-worker counters
-	// rather than one shared atomic: the workers touch nothing of each other's
-	// while they hash, and a worker's own count is a plain local until it
-	// returns.
-	hashes := make([]uint64, s.workers)
+	// One slot per worker, written by the worker that owns it and read by
+	// whoever is reporting: the summary below, once wg.Wait() has ordered the
+	// two, and the --report heartbeat in waitForShutdown while the workers are
+	// still hashing. That second reader is what makes the slots atomic rather
+	// than the plain uint64s #49 wrote once at the end — read mid-run, a plain
+	// slot is a data race, and one no existing test would have provoked (#70).
+	//
+	// Still per-worker rather than one shared counter, and for a reason that
+	// survives the change: every slot has exactly one writer, so publishing a
+	// count is a store of the worker's own local rather than a read-modify-write
+	// over a value every other worker is also incrementing. Not a claim about
+	// cache lines — these slots are eight bytes and unpadded, so eight workers'
+	// counters share one — and at one hash per ~0.18s per worker there is
+	// nothing there to measure either way. What it keeps is that no worker's
+	// count is a number another worker also writes.
+	hashes := make([]atomic.Uint64, s.workers)
 
 	wg.Add(s.workers)
 	for i := range s.workers {
 		go func() {
 			defer wg.Done()
-			hashes[i] = s.stressTestCPU(ctx)
+			s.stressTestCPU(ctx, &hashes[i])
 		}()
 	}
 
-	var sig os.Signal
-	select {
-	case sig = <-received:
-	case <-ctx.Done():
-		// Nothing else cancels ctx before this point — both cancel functions
-		// above are deferred — so reaching this branch means the deadline
-		// expired. With no timeout configured ctx has no deadline and the
-		// select waits on the signal alone. sig is left nil, which is what
-		// tells the two shutdowns apart from here on.
-	}
+	sig := s.waitForShutdown(ctx, received, hashes, start)
 
 	fmt.Println(shutdownMessage(sig))
 
@@ -212,18 +221,79 @@ func (s *Stressy) Run() error {
 
 	wg.Wait()
 
-	var computed uint64
-	for _, n := range hashes {
-		computed += n
-	}
-
-	fmt.Println(s.summaryMessage(computed, time.Since(start)))
+	fmt.Println(s.summaryMessage(totalHashes(hashes), time.Since(start)))
 
 	if sig != nil {
 		return &SignalError{Signal: sig}
 	}
 
 	return nil
+}
+
+// waitForShutdown blocks until the run ends, and prints a progress line every
+// report interval while it waits. It returns the signal that ended the run, or
+// nil where the deadline expired — the distinction Run's shutdown line and the
+// process exit code are both chosen from.
+//
+// The wait was this select without its third branch, inline in Run, and that is
+// the whole of what #70 is about: with both other branches blocking, nothing at
+// all executed on this goroutine between the startup line and the shutdown
+// line. A thirty-minute Kubernetes Job showed one line in `kubectl logs` for
+// the twenty-nine minutes it was working, the other two arriving only once it
+// had stopped, so an operator could not tell a healthy pegged pod from a wedged
+// process without leaving the logs. The image is FROM scratch, so there is no
+// shell to `kubectl exec` in with: stdout is the only in-band window there is.
+func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal, hashes []atomic.Uint64, start time.Time) os.Signal {
+	// nil where --report is off, and a receive from a nil channel blocks
+	// forever — so the default run waits on exactly the two channels it waited
+	// on before this existed, rather than on a ticker that has to be given an
+	// interval nothing wants.
+	var tick <-chan time.Time
+
+	if s.report > 0 {
+		ticker := time.NewTicker(s.report)
+		defer ticker.Stop()
+
+		tick = ticker.C
+	}
+
+	for {
+		select {
+		case sig := <-received:
+			return sig
+		case <-ctx.Done():
+			// Nothing else cancels ctx before this point — both of Run's cancel
+			// functions are deferred — so reaching this branch means the
+			// deadline expired. With no timeout configured ctx has no deadline
+			// and the select waits on the signal alone. Returning nil is what
+			// tells the two shutdowns apart from here on.
+			return nil
+		case <-tick:
+			// time.Since rather than the timestamp the tick carries. A tick
+			// delivered late carries the time it fired, which would print the
+			// elapsed time the line would have had if the process were
+			// healthy — hiding exactly the pathology an operator turns this on
+			// to see.
+			fmt.Println(progressMessage(totalHashes(hashes), time.Since(start)))
+		}
+	}
+}
+
+// totalHashes is what the workers have computed between them: the one place the
+// per-worker slots are added up, read both by the heartbeat mid-run and by the
+// summary once every worker has drained.
+//
+// Indexed rather than ranged over by value, because an atomic.Uint64 must not
+// be copied — `for _, n := range hashes` compiles and go vet's copylocks
+// analyser is what stops it.
+func totalHashes(hashes []atomic.Uint64) uint64 {
+	var total uint64
+
+	for i := range hashes {
+		total += hashes[i].Load()
+	}
+
+	return total
 }
 
 // startupMessage is the line Run prints before the workers start: how many of
@@ -272,6 +342,33 @@ func (s *Stressy) hintMessage() string {
 	return "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information"
 }
 
+// progressMessage is the line a run started with --report prints on every tick:
+// how long it has been going, how much work it has done, and at what rate.
+//
+// The rate is cumulative — every hash since the run started, over the whole
+// elapsed time — rather than what the last interval alone managed. Two reasons.
+// It is the same figure summaryMessage prints, so the last progress line of a
+// run and the summary under it agree instead of differing by a windowing choice
+// the operator cannot see; and it is the figure the README tells people to
+// compare across node pools, which wants the average rather than whatever the
+// last thirty seconds did.
+//
+// The elapsed time is rounded the way the summary rounds it, and deliberately
+// not to the tick interval: rounding to the interval would print "5m0s" for a
+// tick that arrived at 7m, which is the one thing a heartbeat must not do.
+//
+// A plain function rather than a method, like shutdownMessage: the line says
+// nothing about the configuration the run was started with. Built as a string
+// rather than printed in place, for the same reason startupMessage is.
+func progressMessage(hashes uint64, elapsed time.Duration) string {
+	return fmt.Sprintf(
+		"%s elapsed, %d %s, %.1f hashes/s",
+		elapsed.Round(time.Millisecond),
+		hashes, plural(hashes, "hash", "hashes"),
+		hashRate(hashes, elapsed),
+	)
+}
+
 // shutdownMessage is the line Run prints once the run is ending: why it is
 // ending. sig is the signal that stopped it, or nil where the timer expired —
 // the same distinction Run's select has just made, and the same one the exit
@@ -312,14 +409,6 @@ func shutdownMessage(sig os.Signal) string {
 // as a string rather than printed in place, for the same reason startupMessage
 // is.
 func (s *Stressy) summaryMessage(hashes uint64, elapsed time.Duration) string {
-	// A run too short to measure is not a thing that happens — the clock is
-	// monotonic and one hash costs ~0.18s — but dividing by it would print
-	// "+Inf hashes/s" if it did.
-	var rate float64
-	if elapsed > 0 {
-		rate = float64(hashes) / elapsed.Seconds()
-	}
-
 	return fmt.Sprintf(
 		"Computed %d %s in %s (%.1f hashes/s, %d %s)",
 		hashes, plural(hashes, "hash", "hashes"),
@@ -327,9 +416,24 @@ func (s *Stressy) summaryMessage(hashes uint64, elapsed time.Duration) string {
 		// hash that costs two hundred of them, and left to Duration to format
 		// so that the summary spells a duration the way the startup line does.
 		elapsed.Round(time.Millisecond),
-		rate,
+		hashRate(hashes, elapsed),
 		s.workers, plural(s.workers, "worker", "workers"),
 	)
+}
+
+// hashRate is the rate both reporting lines quote: hashes over the seconds they
+// took. One function rather than the same division in each, so that the
+// heartbeat and the summary cannot come to disagree about what the number means.
+//
+// The guard is the reason it is worth a function at all. A run too short to
+// measure is not a thing that happens — the clock is monotonic and one hash
+// costs ~0.18s — but dividing by it would print "+Inf hashes/s" if it did.
+func hashRate(hashes uint64, elapsed time.Duration) float64 {
+	if elapsed <= 0 {
+		return 0
+	}
+
+	return float64(hashes) / elapsed.Seconds()
 }
 
 // plural picks the form of a noun that goes with n. The startup line opened
@@ -345,12 +449,12 @@ func plural[T int | uint64](n T, one, many string) string {
 
 // ValidateWorkers reports whether workers is a count a run can be started with.
 //
-// Exported, along with ValidateTimeout, because the command layer checks both
-// before the run — where it still knows whether a value came from `-w` or from
-// STRESSY_WORKERS, and can therefore name the one that produced it. This
-// package cannot: by the time it holds the value, the flag, the variable and
-// the default are one int (#51). The rule lives here so that the two callers
-// cannot come to disagree about it.
+// Exported, like the other validators here, because the command layer checks
+// each of them before the run — where it still knows whether a value came from
+// `-w` or from STRESSY_WORKERS, and can therefore name the one that produced
+// it. This package cannot: by the time it holds the value, the flag, the
+// variable and the default are one int (#51). The rule lives here so that the
+// two callers cannot come to disagree about it.
 func ValidateWorkers(workers int) error {
 	if workers < 1 {
 		return fmt.Errorf("workers must be 1 or greater")
@@ -370,12 +474,30 @@ func ValidateTimeout(timeout time.Duration) error {
 	return nil
 }
 
+// ValidateReport reports whether report is an interval a run can be started
+// with. Zero is valid and means no progress line at all, which is the default;
+// see ValidateWorkers for why this is exported.
+//
+// No upper bound and no lower one beyond zero. An interval longer than the
+// timeout prints nothing, which is what asking for a report every hour on a
+// five-minute run means, and an interval of a millisecond floods stdout — but
+// both are what the operator typed, and this flag is off unless they typed
+// something.
+func ValidateReport(report time.Duration) error {
+	if report < 0 {
+		return fmt.Errorf("report must be 0 (off) or greater")
+	}
+
+	return nil
+}
+
 // validateConfig checks if the Stressy instance's configuration is valid.
 // Returns an error if:
 //   - workers is less than 1
 //   - timeout is negative
+//   - report is negative
 //
-// The command validates the same two settings before it gets here, so on that
+// The command validates the same three settings before it gets here, so on that
 // path this is a backstop rather than the first line of defence. It is still
 // where the rules are enforced for every other caller of Run, and it runs
 // before a single worker starts.
@@ -384,31 +506,38 @@ func (s *Stressy) validateConfig() error {
 		return err
 	}
 
-	return ValidateTimeout(s.timeout)
+	if err := ValidateTimeout(s.timeout); err != nil {
+		return err
+	}
+
+	return ValidateReport(s.report)
 }
 
-// stressTestCPU performs CPU-intensive operations in a loop and returns how
-// many hashes it computed. It runs in its own goroutine and continues until ctx
-// is cancelled. The CPU load is generated by repeatedly computing bcrypt hashes
-// at hashCost, which is where the whole of the load lives — bcrypt salts every
-// call itself, so nothing outside the hash has to vary for the work to be real,
-// and a worker returns within one hash of ctx being done.
+// stressTestCPU performs CPU-intensive operations in a loop, publishing how
+// many hashes it has computed into hashes as it goes. It runs in its own
+// goroutine and continues until ctx is cancelled. The CPU load is generated by
+// repeatedly computing bcrypt hashes at hashCost, which is where the whole of
+// the load lives — bcrypt salts every call itself, so nothing outside the hash
+// has to vary for the work to be real, and a worker returns within one hash of
+// ctx being done.
 //
-// The count is returned rather than added to something shared: it is a local
-// until the worker is finished with it, so nothing about counting the work
-// touches the work (#49).
-func (s *Stressy) stressTestCPU(ctx context.Context) uint64 {
+// The running count is a plain local that nothing else can see, and publishing
+// it is a separate step: a store the worker owns, into a slot no other worker
+// writes. That is what #49's returned count bought — nothing about counting the
+// work touches the work — kept while giving the --report heartbeat something to
+// read before the run is over (#70).
+func (s *Stressy) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 	// Hoisted: formatting a timestamp per iteration was never the load this
 	// tool exists to generate, and a constant keeps the input well inside
 	// bcrypt's 72-byte limit rather than merely under it by accident.
 	password := []byte("stressy")
 
-	var hashes uint64
+	var computed uint64
 
 	for {
 		select {
 		case <-ctx.Done():
-			return hashes
+			return
 		default:
 			// Unreachable in practice: the cost is a valid constant and the
 			// password is seven bytes, which leaves salt generation as the
@@ -417,7 +546,8 @@ func (s *Stressy) stressTestCPU(ctx context.Context) uint64 {
 				panic(err)
 			}
 
-			hashes++
+			computed++
+			hashes.Store(computed)
 		}
 	}
 }

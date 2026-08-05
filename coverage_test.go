@@ -48,7 +48,7 @@ type coverBlock struct {
 //
 // Both halves of the claim are checked, because the sentence makes two: the
 // percentage, and that what is left uncovered is a single unreachable `panic`.
-// The second is the interesting one — it is what says the missing 1.3% is a
+// The second is the interesting one — it is what says the missing 1.1% is a
 // branch that cannot be reached rather than a path nobody got to, and it would
 // quietly stop being true the first time a real gap opened.
 func TestUnreleasedCoverageClaim(t *testing.T) {

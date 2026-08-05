@@ -273,10 +273,13 @@ func TestProgressMessage(t *testing.T) {
 				t.Errorf("progressMessage(%d, %s) = %q, want %q", tt.hashes, tt.elapsed, got, tt.want)
 			}
 
-			// The same shape docs_test.go holds the README's sample to, checked
-			// here as well so that the two cannot drift: this test pins the
-			// wording, that one pins the documentation, and this is what says
-			// they are pinning the same line.
+			// A copy of the pattern docs_test.go holds the README's sample to,
+			// and a copy is all it is: internal/stressy cannot import main, so
+			// nothing here would notice that one being edited. What keeps them
+			// honest is that each is anchored to real output rather than to
+			// the other — this one to the string progressMessage returns, that
+			// one to the line TestExitCodes reads off a child process — so a
+			// shape that changed on one side fails on the other.
 			if !progressLine.MatchString(got) {
 				t.Errorf("progressMessage(%d, %s) = %q, which is not the shape the README documents", tt.hashes, tt.elapsed, got)
 			}

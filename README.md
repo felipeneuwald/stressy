@@ -152,8 +152,8 @@ Timer expired, shutting down...
 Computed 6600 hashes in 5m0.093s (22.0 hashes/s, 4 workers)
 ```
 
-It is off unless you ask for it: a run given no `--report` prints what the two
-sessions above show and nothing more. Two things about the numbers, both of
+It is off unless you ask for it: a run given no `--report` prints what the first
+two sessions above show and nothing more. Two things about the numbers, both of
 which matter if you are watching the line rather than reading it afterwards. The
 rate is cumulative — every hash since the run started over the whole elapsed
 time, which is the same figure the summary ends with, so the last progress line

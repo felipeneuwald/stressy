@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/spf13/pflag"
+
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
@@ -29,7 +31,14 @@ import (
 // config-parsing dependencies (#18, #20).
 
 const (
-	readmePath        = "README.md"
+	readmePath = "README.md"
+	// CONTRIBUTING.md publishes an invocation of its own — `./stressy -w 2 -t
+	// 5s`, the first thing a new contributor runs — in the one document that
+	// states the house rule requiring these tests (#59).
+	contributingPath = "CONTRIBUTING.md"
+	// The Dockerfile is documentation's subject rather than documentation: the
+	// README's Kubernetes guidance is built on the UID it sets (#55).
+	dockerfilePath    = "Dockerfile"
 	releaseConfigPath = ".goreleaser.yaml"
 
 	// imageRepo is this project's published image, without a tag. A reference
@@ -46,6 +55,14 @@ const (
 	// instruction is the one who has not read the README (#52).
 	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
 	helpPointer = "Use --help for additional information"
+
+	// prereleaseGuard and guardEnd are what wrap a floating image tag in the
+	// release config. goreleaser skips an image or manifest whose template
+	// renders empty, so a tag inside them is published by a full release and by
+	// nothing else — which is the whole of what keeps `:latest` off a release
+	// candidate (#23, #56).
+	prereleaseGuard = "{{ if not .Prerelease }}"
+	guardEnd        = "{{ end }}"
 )
 
 // imageRef matches a tagged reference to imageRepo. The tag pattern deliberately
@@ -65,6 +82,19 @@ var summaryLine = regexp.MustCompile(`^Computed (\d+) hash(?:es)? in \S+ \(\d+\.
 // backticks in the first cell, what it means in the second. It knows the one
 // shape that table uses, like everything else in this file.
 var exitCodeRow = regexp.MustCompile("(?m)^\\|\\s*`(\\d+)`\\s*\\|\\s*(.+?)\\s*\\|\\s*$")
+
+// documentedFlag matches a bullet of the README's Available Flags list,
+// capturing the shorthand and the long name out of the `-w, --workers` code
+// span that opens it.
+var documentedFlag = regexp.MustCompile("(?m)^- `-(\\w), --([\\w-]+)`:")
+
+// dockerUser matches the Dockerfile's numeric `USER uid:gid`, and documentedUID
+// the claim the README makes about it: the phrase UID/GID `65532`, wherever it
+// appears.
+var (
+	dockerUser    = regexp.MustCompile(`(?m)^USER (\d+):(\d+)\s*$`)
+	documentedUID = regexp.MustCompile("UID/GID `(\\d+)`")
+)
 
 // readmeSignalNames maps a signal a run stops on to the name the README has to
 // call it by. A signal added to stressy.ShutdownSignals without an entry here
@@ -270,6 +300,157 @@ func TestDocumentedStopHint(t *testing.T) {
 	}
 }
 
+// TestDocumentedFlagsExist holds the README's Available Flags list to the
+// command that has to answer it. Each bullet is two claims — a long name and a
+// shorthand — and the flag list is a bullet list rather than a fenced block, so
+// it escapes the invocation net above and was checked by nothing.
+//
+// `-v, --version` is the claim that makes the README side worth pinning. The
+// flag itself is held from the command side already — #47's
+// TestFlagsCobraSetItselfWorkOnTheCommandLine runs both spellings through the
+// command, and deleting the `Version` line newCmd's flag hangs on fails it —
+// but nothing read the list. A bullet naming a flag the command does not have,
+// a shorthand the command spells differently, and a flag the command grows that
+// the list never mentions all passed (#54).
+//
+// The shorthand is worth pinning from here too: cobra gives --version the `v`
+// spelling only while no other flag has claimed it, and registers the flag
+// without a shorthand if one has — so a future --verbose repoints what this
+// bullet promises without removing anything.
+func TestDocumentedFlagsExist(t *testing.T) {
+	rows := documentedFlag.FindAllStringSubmatch(strings.Join(lines(t, readmePath), "\n"), -1)
+	if rows == nil {
+		t.Fatalf("%s lists no flags in the `-w, --workers` bullet shape, so nothing holds its flag list to the command", readmePath)
+	}
+
+	// --help and --version are cobra's rather than newCmd's, and cobra
+	// registers them as Execute starts; initialising them here is what brings
+	// them within reach of a lookup, and is the same pair of calls Execute
+	// makes.
+	cmd := newCmd(&stressy.Cfg{})
+	cmd.InitDefaultHelpFlag()
+	cmd.InitDefaultVersionFlag()
+
+	documented := make(map[string]bool, len(rows))
+
+	for _, row := range rows {
+		shorthand, name := row[1], row[2]
+		documented[name] = true
+
+		t.Run(name, func(t *testing.T) {
+			f := cmd.Flags().Lookup(name)
+			if f == nil {
+				t.Fatalf("%s documents --%s, which the command does not have", readmePath, name)
+			}
+
+			if f.Shorthand != shorthand {
+				t.Errorf("%s documents -%s for --%s, which the command gives the shorthand %q", readmePath, shorthand, name, f.Shorthand)
+			}
+		})
+	}
+
+	// The other direction, checked for the same reason TestDocumentedExitCodes
+	// checks both: a flag the command grows and the README never mentions is
+	// one a reader finds only by running `--help` and knowing to look.
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if !documented[f.Name] {
+			t.Errorf("the command has --%s, which %s's flag list does not document", f.Name, readmePath)
+		}
+	})
+}
+
+// TestImageRunsAsDocumentedUser holds the README's claim about the image's
+// identity to the Dockerfile that sets it. The Kubernetes manifest omits
+// `runAsUser` on purpose — "the image already runs as UID/GID `65532`" — so
+// that a pod under the `restricted` Pod Security Standard needs nothing beyond
+// what the standard already asks for, and that omission is correct only while
+// the Dockerfile keeps its `USER` line (#55).
+//
+// Nothing else would notice it going. CI's release dry run builds this
+// Dockerfile on every pull request, but building an image and running one are
+// different things: an image with no `USER`, or a rooted one, builds exactly as
+// cleanly, and the first place it shows up is a kubelet refusing to start the
+// container under `runAsNonRoot: true` — in a user's cluster, with a green
+// release behind it. The pending `dockers_v2` migration rewrites that
+// publishing path, which is the change this is here for.
+func TestImageRunsAsDocumentedUser(t *testing.T) {
+	set := dockerUser.FindAllStringSubmatch(strings.Join(lines(t, dockerfilePath), "\n"), -1)
+	if set == nil {
+		t.Fatalf("%s sets no numeric `USER uid:gid`, so the image runs as root and every pod spec under runAsNonRoot has to pin runAsUser itself (#55)", dockerfilePath)
+	}
+
+	// The last one, which is the one docker applies. There is one today; reading
+	// the first would mean a `USER 0:0` appended below it passed this.
+	user := set[len(set)-1]
+	uid, gid := user[1], user[2]
+
+	// Numeric and non-zero is the whole of what the kubelet's check needs:
+	// scratch carries no /etc/passwd for a name to resolve against, and root is
+	// the one identity `runAsNonRoot: true` refuses.
+	if uid == "0" || gid == "0" {
+		t.Errorf("%s sets USER %s:%s, which the kubelet refuses to start under runAsNonRoot: true", dockerfilePath, uid, gid)
+	}
+
+	claims := documentedUID.FindAllStringSubmatch(strings.Join(lines(t, readmePath), "\n"), -1)
+	if claims == nil {
+		t.Fatalf("%s no longer says what UID the image runs as, which is what its Kubernetes manifest leaves runAsUser out on the strength of (#55)", readmePath)
+	}
+
+	// The two files are matched against each other rather than each against a
+	// literal here, so that changing the UID in both passes and changing it in
+	// either alone fails.
+	for _, claim := range claims {
+		if claim[1] != uid || claim[1] != gid {
+			t.Errorf("%s advertises UID/GID %s, %s sets USER %s:%s", readmePath, claim[1], dockerfilePath, uid, gid)
+		}
+	}
+}
+
+// TestFloatingTagsAreGuardedAgainstPrereleases covers #56. The README promises
+// that "`:latest` only ever points at a full release; pre-release tags such as
+// `v0.4.0-rc1` publish under their own version tag and leave `:latest` alone",
+// and the whole of what keeps that true is the guard wrapping each floating tag
+// in the release config — the settled fix of #23, asserted by nothing.
+//
+// Un-guarding one is invisible by construction. A missing guard does not fail a
+// build, it publishes a tag — and CI's release dry run never publishes, never
+// renders the `docker_manifests` block at all, and never sees a pre-release
+// version pushed for real. Meanwhile CONTRIBUTING.md tells maintainers to
+// rehearse the publishing half by tagging a `vX.Y.Z-rcN` on the strength of
+// exactly these guards. With one gone, that rehearsal repoints a floating tag —
+// `:latest` itself, the one `docker run` resolves by default, if it is the
+// manifest's — at a release candidate, and the wrong artefact announces itself
+// to nobody.
+//
+// Anchored on the tags rather than on line positions, so the pending
+// `dockers_v2` migration inherits the requirement: a floating tag written into
+// whatever replaces these blocks carries the guard or fails here.
+func TestFloatingTagsAreGuardedAgainstPrereleases(t *testing.T) {
+	var found int
+
+	for i, line := range lines(t, releaseConfigPath) {
+		line = withoutComment(line)
+
+		// imageRef admits no `{`, so every reference it matches names a literal
+		// tag — and a literal tag in a release config is one that stays where
+		// it is put while the version moves underneath it. The versioned tags
+		// are templated, and match nothing here.
+		for _, ref := range imageRef.FindAllString(line, -1) {
+			found++
+
+			guard, end, tag := strings.Index(line, prereleaseGuard), strings.Index(line, guardEnd), strings.Index(line, ref)
+
+			if guard < 0 || tag < guard || end < tag {
+				t.Errorf("%s:%d publishes the floating tag %s without wrapping it in %s…%s, so tagging a pre-release would repoint it at a release candidate (#23, #56)", releaseConfigPath, i+1, ref, prereleaseGuard, guardEnd)
+			}
+		}
+	}
+
+	if found == 0 {
+		t.Errorf("%s names no literal %s tag, so this test is checking nothing: either the floating tags are gone, or they are written in a shape it cannot see", releaseConfigPath, imageRepo)
+	}
+}
+
 // run executes the invocation against the real command, with the stress test
 // itself stubbed out by newTestCmd, and returns what the run was configured
 // with.
@@ -278,11 +459,11 @@ func (inv invocation) run(t *testing.T) stressy.Cfg {
 
 	// The ambient environment configures a run too, so a developer with
 	// STRESSY_WORKERS exported would otherwise be testing something other than
-	// what the documentation says. Empty rather than unset because that is the
-	// behaviour bindEnv documents and keeps deliberately: `STRESSY_WORKERS=${WORKERS}`
-	// with WORKERS undefined is a common shape in compose files and pod specs.
-	t.Setenv("STRESSY_WORKERS", "")
-	t.Setenv("STRESSY_TIMEOUT", "")
+	// what the documentation says. newTestCmd blanks those variables, which is
+	// why it is built before the documented ones are applied rather than after.
+	// See clearStressyEnv.
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
 
 	for _, assignment := range inv.env {
 		name, value, ok := strings.Cut(assignment, "=")
@@ -293,8 +474,6 @@ func (inv invocation) run(t *testing.T) stressy.Cfg {
 		t.Setenv(name, value)
 	}
 
-	var cfg stressy.Cfg
-	cmd := newTestCmd(t, &cfg)
 	cmd.SetArgs(inv.args)
 
 	if err := cmd.Execute(); err != nil {
@@ -305,10 +484,22 @@ func (inv invocation) run(t *testing.T) stressy.Cfg {
 }
 
 // documentedInvocations gathers every stressy run the project publishes.
+//
+// CONTRIBUTING.md is read alongside the README because it publishes one too,
+// and a flag rename would leave it broken-but-green — the silent drift this
+// file exists to prevent, in the document that states the rule (#59). Its other
+// bash lines start with tokens the parser below already skips, and its
+// commit-subject block is fenced without a language, so nothing there is read
+// as shell.
 func documentedInvocations(t *testing.T) []invocation {
 	t.Helper()
 
-	found := append(readmeInvocations(t), exampleInvocations(t)...)
+	var found []invocation
+	for _, path := range []string{readmePath, contributingPath} {
+		found = append(found, fileInvocations(t, path)...)
+	}
+
+	found = append(found, exampleInvocations(t)...)
 	if len(found) == 0 {
 		t.Fatal("no documented invocations found, so these tests are checking nothing")
 	}
@@ -316,9 +507,9 @@ func documentedInvocations(t *testing.T) []invocation {
 	return found
 }
 
-// readmeInvocations reads the README's fenced blocks: shell for the command
+// fileInvocations reads a document's fenced blocks: shell for the command
 // lines, YAML for the Kubernetes Job.
-func readmeInvocations(t *testing.T) []invocation {
+func fileInvocations(t *testing.T, path string) []invocation {
 	t.Helper()
 
 	var (
@@ -329,9 +520,9 @@ func readmeInvocations(t *testing.T) []invocation {
 		image   string
 	)
 
-	for i, line := range lines(t, readmePath) {
+	for i, line := range lines(t, path) {
 		trimmed := strings.TrimSpace(line)
-		source := fmt.Sprintf("%s:%d", readmePath, i+1)
+		source := fmt.Sprintf("%s:%d", path, i+1)
 
 		if fence, ok := strings.CutPrefix(trimmed, "```"); ok {
 			if inBlock {
@@ -520,14 +711,34 @@ func documentedImages(t *testing.T) []string {
 	return found
 }
 
+// withoutComment returns the configuration on a line, with any comment removed:
+// in YAML a `#` opens one at the start of a line or after a space.
+//
+// Prose about the configuration is not the configuration. The header above the
+// `dockers` blocks names `ghcr.io/felipeneuwald/stressy:latest` while
+// explaining why the guards are there, and a check reading it would find both a
+// floating tag with no guard and a published image that nothing publishes.
+func withoutComment(line string) string {
+	if i := strings.Index(line, "#"); i >= 0 && (i == 0 || line[i-1] == ' ') {
+		return line[:i]
+	}
+
+	return line
+}
+
 // publishedImages returns the literal image references a release publishes. The
 // `{{ if not .Prerelease }}` guards are stripped first — they keep the floating
 // tags off a release candidate and say nothing about whether the tag exists.
 func publishedImages(t *testing.T) []string {
 	t.Helper()
 
-	config := strings.Join(lines(t, releaseConfigPath), "\n")
-	for _, guard := range []string{"{{ if not .Prerelease }}", "{{ end }}"} {
+	var code []string
+	for _, line := range lines(t, releaseConfigPath) {
+		code = append(code, withoutComment(line))
+	}
+
+	config := strings.Join(code, "\n")
+	for _, guard := range []string{prereleaseGuard, guardEnd} {
 		config = strings.ReplaceAll(config, guard, "")
 	}
 

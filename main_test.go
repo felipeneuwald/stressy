@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
@@ -19,8 +20,15 @@ import (
 // no-op RunE: the actual RunE starts the stress test, which saturates the CPU
 // and blocks until signalled. Everything else — flag registration, the
 // environment binding in PreRunE — is what main() runs.
+// TestBoundedRunExecutesTheStressTest is the one case that keeps the real one.
+//
+// A case that sets its own STRESSY_* value has to do so after this returns:
+// clearStressyEnv runs here, and it blanks them. The environment is read at
+// Execute time, so that ordering costs nothing.
 func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	t.Helper()
+
+	clearStressyEnv(t)
 
 	c := newCmd(cfg)
 	c.RunE = func(*cobra.Command, []string) error { return nil }
@@ -36,6 +44,95 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	c.SetErr(io.Discard)
 
 	return c
+}
+
+// clearStressyEnv blanks every variable a run can be configured from, so that
+// these cases read the configuration in front of them rather than the one the
+// shell running `go test` happens to export. `STRESSY_WORKERS=4 go test .`
+// failed six cases in this file, on a machine that had done nothing wrong but
+// use the tool (#58).
+//
+// The case below that runs real workers calls it too, though it pins both flags
+// on the command line and so cannot be reached from the environment as written:
+// there an ambient STRESSY_TIMEOUT would be worse than a failure, and this is
+// what keeps that true of any later case that stops passing `-t`.
+//
+// Blank rather than unset, which is the same move docs_test.go was already
+// making: bindEnv treats an empty value as unset deliberately, because
+// `STRESSY_WORKERS=${WORKERS}` with WORKERS undefined is a common shape in
+// compose files and pod specs, and t.Setenv restores what was there afterwards.
+//
+// The names are read off the command's own flags through envName, the mapping
+// the binary itself uses, so a third flag is covered by this the day it is
+// registered rather than the day someone remembers this function exists.
+func clearStressyEnv(t *testing.T) {
+	t.Helper()
+
+	newCmd(&stressy.Cfg{}).Flags().VisitAll(func(f *pflag.Flag) {
+		t.Setenv(envName(envPrefix, f.Name), "")
+	})
+}
+
+// TestBoundedRunExecutesTheStressTest is the one case here that runs the
+// command main() builds with the RunE main() runs, rather than the stub
+// newTestCmd swaps in. That single line — `stressy.New(*cfg).Run()` — is the
+// whole of the join between the CLI and the engine, and it was executed by
+// nothing: a refactor that stopped threading cfg through it, or built RunE over
+// a zero Cfg, would break every real invocation of this tool while the suite
+// stayed green (#53).
+//
+// Bounded on purpose, and cheaply: one worker for 50ms, plus the hash that
+// worker is inside when the deadline lands — ~0.18s on an M-series core, and
+// under 2s on a loaded CI runner under -race. TestExitCodes covers the same
+// wiring through a real process; this covers it on the platforms that test is
+// not built for, and reads the return value that one can only see as a status.
+func TestBoundedRunExecutesTheStressTest(t *testing.T) {
+	const (
+		timeout = 50 * time.Millisecond
+		// budget bounds the case end to end, and is as loose as
+		// internal/stressy's stopBudget for the same reason: the hash a worker
+		// is inside measures ~0.18s on an M-series core and ~1.9s on a loaded
+		// CI runner under -race. It is reached only by the regression this case
+		// exists for — a `-t` that never arrives is an indefinite run, and
+		// without this that is a hang until the whole binary's timeout fires
+		// rather than a failure that names itself.
+		budget = 30 * time.Second
+	)
+
+	clearStressyEnv(t)
+
+	var cfg stressy.Cfg
+	cmd := newCmd(&cfg)
+	cmd.SetArgs([]string{"-w", "1", "-t", timeout.String()})
+
+	start := time.Now()
+
+	// Run prints its own lines with fmt.Println to os.Stdout rather than
+	// through cobra's writer, so they land in the test output. Left there: they
+	// are what TestExitCodes reads off a child process, and seeing them here is
+	// evidence this case ran the real thing.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Execute() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Execute() error = %v, want a completed run", err)
+		}
+	case <-time.After(budget):
+		t.Fatalf("Execute() did not return within %s of a run given %s", budget, timeout)
+	}
+
+	// What makes this more than "Execute returned nil": a RunE handed a stale or
+	// half-populated Cfg — one the `-t` never reached — returns nil as well,
+	// having run for some length of time other than the one asked for.
+	if elapsed := time.Since(start); elapsed < timeout {
+		t.Errorf("Execute() returned after %s, want at least the %s the run was given", elapsed, timeout)
+	}
+
+	if cfg.Workers != 1 || cfg.Timeout != timeout {
+		t.Errorf("Workers, Timeout = %d, %s; want 1, %s", cfg.Workers, cfg.Timeout, timeout)
+	}
 }
 
 // TestFlagRegistration pins the operator-facing shape of both flags: name,
@@ -160,12 +257,16 @@ func TestConfigResolution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built, not before: newTestCmd blanks the
+			// ambient STRESSY_* variables, and a case's own values have to
+			// survive that. See clearStressyEnv.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
 
-			var cfg stressy.Cfg
-			cmd := newTestCmd(t, &cfg)
 			cmd.SetArgs(tt.args)
 
 			if err := cmd.Execute(); err != nil {
@@ -242,10 +343,12 @@ var malformedValues = []struct {
 func TestMalformedEnvValueIsRejected(t *testing.T) {
 	for _, tt := range malformedValues {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(tt.env, tt.value)
-
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built; see clearStressyEnv.
+			t.Setenv(tt.env, tt.value)
+
 			cmd.SetArgs(tt.other)
 
 			err := cmd.Execute()
@@ -324,12 +427,16 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built; see clearStressyEnv. These two are
+			// not among the variables it blanks — they are cobra's flags, which
+			// is the point of the case — but the ordering is the same one every
+			// case in this file keeps.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
-
-			var cfg stressy.Cfg
-			cmd := newTestCmd(t, &cfg)
 
 			var ran bool
 			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
@@ -533,12 +640,24 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			// After the command is built; see clearStressyEnv.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
 
-			var cfg stressy.Cfg
-			cmd := newTestCmd(t, &cfg)
+			// newTestCmd discards both streams. What an operator sees is the
+			// whole of what #17a is about, so this case reads it back instead —
+			// one buffer for both, because which stream cobra routes the usage
+			// screen to is exactly the internal detail this should not depend
+			// on. SilenceErrors, which newTestCmd sets, suppresses the error
+			// line rather than the usage screen, so it leaves this alone.
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+
 			cmd.RunE = func(*cobra.Command, []string) error { return tt.runErr }
 			cmd.SetArgs(tt.args)
 
@@ -546,6 +665,18 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 				t.Fatal("Execute() error = nil, want the case to fail")
 			}
 
+			// The behaviour, rather than the field that currently produces it:
+			// a usage screen printed by hand on some error path, or a cobra
+			// release that honours SilenceUsage differently, regresses what the
+			// operator reads while leaving the field — and a test asserting
+			// only the field — green (#60).
+			wantUsage := !tt.wantSilence
+			if gotUsage := strings.Contains(out.String(), "Usage:"); gotUsage != wantUsage {
+				t.Errorf("Execute(%q) printed:\n%s\nwant the usage screen printed = %t", tt.args, out.String(), wantUsage)
+			}
+
+			// Kept as the second assertion: it is the mechanism, and it says so
+			// directly when the line above fails.
 			if cmd.SilenceUsage != tt.wantSilence {
 				t.Errorf("SilenceUsage = %t, want %t", cmd.SilenceUsage, tt.wantSilence)
 			}

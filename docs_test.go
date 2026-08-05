@@ -36,10 +36,14 @@ const (
 	// 5s`, the first thing a new contributor runs — in the one document that
 	// states the house rule requiring these tests (#59).
 	contributingPath = "CONTRIBUTING.md"
+	// SECURITY.md states when the vulnerability scan fires, which is a claim
+	// about .github/workflows/ci.yml (#61).
+	securityPath = "SECURITY.md"
 	// The Dockerfile is documentation's subject rather than documentation: the
 	// README's Kubernetes guidance is built on the UID it sets (#55).
 	dockerfilePath    = "Dockerfile"
 	releaseConfigPath = ".goreleaser.yaml"
+	ciWorkflowPath    = ".github/workflows/ci.yml"
 
 	// imageRepo is this project's published image, without a tag. A reference
 	// starting with it is stressy's own and gets checked; anything else in a
@@ -87,6 +91,14 @@ var exitCodeRow = regexp.MustCompile("(?m)^\\|\\s*`(\\d+)`\\s*\\|\\s*(.+?)\\s*\\
 // capturing the shorthand and the long name out of the `-w, --workers` code
 // span that opens it.
 var documentedFlag = regexp.MustCompile("(?m)^- `-(\\w), --([\\w-]+)`:")
+
+// ciTriggerClaim matches the one shape CONTRIBUTING.md and SECURITY.md state
+// CI's trigger in, with the branch named or not: "on every push to main and
+// every pull request", and the drift #61 reported, "on every push and pull
+// request". The branch is optional in the pattern rather than required, so an
+// unqualified claim is matched and then judged, instead of slipping past as a
+// non-match — which is the failure mode that let the drift sit there.
+var ciTriggerClaim = regexp.MustCompile("on every push(?: to `?([\\w./-]+)`?)? and (?:every )?pull request")
 
 // dockerUser matches the Dockerfile's numeric `USER uid:gid`, and documentedUID
 // the claim the README makes about it: the phrase UID/GID `65532`, wherever it
@@ -451,6 +463,118 @@ func TestFloatingTagsAreGuardedAgainstPrereleases(t *testing.T) {
 	}
 }
 
+// TestDocumentedCITriggerMatchesTheWorkflow covers #61. CONTRIBUTING.md told a
+// contributor that "CI runs these on every push and pull request" and
+// SECURITY.md that "`govulncheck` runs in CI on every push and pull request",
+// where ci.yml filters its push trigger to main — so someone pushing a topic
+// branch and waiting for the feedback those sentences promised got no run at
+// all, and the vulnerability scan fired less often than the security policy
+// said it did.
+//
+// Worth a test rather than a careful reading for the usual reason: a workflow
+// trigger is edited in a file neither document is open beside, and narrowing
+// one produces no failure anywhere — the sentence describing it simply stops
+// being true. The two documents are read together because they made the same
+// claim about the same file and drifted the same way.
+//
+// Both directions, like TestDocumentedExitCodes. A claim that names no branch
+// where the workflow filters to one is the drift this fixes; a claim that names
+// one where the workflow filters to nothing is the same error inverted, and
+// would send a contributor looking for a run that fired on their branch all
+// along.
+func TestDocumentedCITriggerMatchesTheWorkflow(t *testing.T) {
+	branches, onPullRequest := ciTrigger(t)
+
+	// The "and every pull request" half is a claim too, and it is the half
+	// that makes the branch filter tolerable: with it gone, a topic branch
+	// would get no CI at any point.
+	if !onPullRequest {
+		t.Fatalf("%s has no `pull_request:` trigger, so both documents are wrong about the half of the claim that lets a contributor see CI at all", ciWorkflowPath)
+	}
+
+	// One branch is what a sentence in prose can name without listing. A
+	// filter naming two fails here rather than being approximated by whichever
+	// of them the documents happen to mention — the same trade release_test.go
+	// makes with an unknown platform name.
+	if len(branches) > 1 {
+		t.Fatalf("%s filters the push trigger to %v, which neither document can state as a single branch; reword both and teach this test the new shape", ciWorkflowPath, branches)
+	}
+
+	for _, path := range []string{contributingPath, securityPath} {
+		t.Run(path, func(t *testing.T) {
+			claims := ciTriggerClaim.FindAllStringSubmatch(unwrapped(t, path), -1)
+			if claims == nil {
+				t.Fatalf("%s no longer says when CI fires, so nothing holds the two documents to %s (#61)", path, ciWorkflowPath)
+			}
+
+			for _, claim := range claims {
+				named := claim[1]
+
+				switch {
+				case len(branches) == 0:
+					if named != "" {
+						t.Errorf("%s says %q, where %s filters the push trigger to no branch at all", path, claim[0], ciWorkflowPath)
+					}
+				case named == "":
+					t.Errorf("%s says %q, where %s runs the push trigger only on %s — a contributor pushing a topic branch with no pull request open gets no run at all (#61)", path, claim[0], ciWorkflowPath, branches[0])
+				case named != branches[0]:
+					t.Errorf("%s says %q, where %s filters the push trigger to %s", path, claim[0], ciWorkflowPath, branches[0])
+				}
+			}
+		})
+	}
+}
+
+// ciTrigger reads the `on:` block of the CI workflow: the branches its push
+// trigger is filtered to, empty where it is unfiltered, and whether it runs on
+// pull requests at all.
+//
+// Not a YAML parser, for the reason nothing else in this file is one either. It
+// knows the one shape this block uses — a trigger alone on its line at one
+// level of indentation, its settings at the next — and tracks which trigger it
+// is inside rather than taking the first `branches:` it finds, so a filter
+// added to `pull_request:` is not read as the push trigger's.
+func ciTrigger(t *testing.T) (branches []string, onPullRequest bool) {
+	t.Helper()
+
+	src := lines(t, ciWorkflowPath)
+
+	start := slices.IndexFunc(src, func(line string) bool { return line == "on:" })
+	if start < 0 {
+		t.Fatalf("%s has no top-level `on:` block, so this test cannot tell what CI fires on", ciWorkflowPath)
+	}
+
+	var trigger string
+
+	for i, line := range src[start+1:] {
+		code := withoutComment(line)
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+
+		// Back at the left margin is the end of the block: the next top-level
+		// key, `concurrency:` today.
+		if !strings.HasPrefix(code, " ") {
+			break
+		}
+
+		source := fmt.Sprintf("%s:%d", ciWorkflowPath, start+i+2)
+
+		if name, ok := strings.CutPrefix(code, "  "); ok && !strings.HasPrefix(name, " ") {
+			trigger = strings.TrimSuffix(strings.TrimSpace(name), ":")
+			onPullRequest = onPullRequest || trigger == "pull_request"
+
+			continue
+		}
+
+		if list, ok := strings.CutPrefix(strings.TrimSpace(code), "branches:"); ok && trigger == "push" {
+			branches = flowList(t, source, list)
+		}
+	}
+
+	return branches, onPullRequest
+}
+
 // run executes the invocation against the real command, with the stress test
 // itself stubbed out by newTestCmd, and returns what the run was configured
 // with.
@@ -679,13 +803,27 @@ func dockerRun(t *testing.T, source string, fields []string) (invocation, bool) 
 	return invocation{}, false
 }
 
-// flowList reads the `["-t", "60s"]` form the Job manifest uses for args.
+// unwrapped returns a document as one line, every run of whitespace collapsed
+// to a single space.
+//
+// Both documents it is used on are hard wrapped, and the claim #61 is about
+// straddles a line break in SECURITY.md, so the line-at-a-time reading the rest
+// of this file does would see half a sentence and match nothing. What it costs
+// is the line number in a failure message, which the quoted claim replaces.
+func unwrapped(t *testing.T, path string) string {
+	t.Helper()
+
+	return strings.Join(strings.Fields(strings.Join(lines(t, path), " ")), " ")
+}
+
+// flowList reads the `["-t", "60s"]` form the Job manifest uses for args, and
+// the `[main]` one ci.yml uses for the push trigger's branch filter.
 func flowList(t *testing.T, source, list string) []string {
 	t.Helper()
 
 	list = strings.TrimSpace(list)
 	if !strings.HasPrefix(list, "[") || !strings.HasSuffix(list, "]") {
-		t.Fatalf(`%s: args is %s, which this test only reads in the flow form ["-t", "60s"]`, source, list)
+		t.Fatalf(`%s: %s is not the flow form ["a", "b"] this test reads`, source, list)
 	}
 
 	var args []string

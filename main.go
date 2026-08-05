@@ -12,7 +12,8 @@ import (
 )
 
 // envPrefix is the prefix on the environment variables that configure stressy:
-// --workers is read from STRESSY_WORKERS, --timeout from STRESSY_TIMEOUT.
+// --workers is read from STRESSY_WORKERS, --timeout from STRESSY_TIMEOUT and
+// --report from STRESSY_REPORT.
 const envPrefix = "STRESSY"
 
 var cmd = newCmd(&stressy.Cfg{})
@@ -26,7 +27,7 @@ func newCmd(cfg *stressy.Cfg) *cobra.Command {
 		Short: "Stressy is a simple tool to perform CPU stress tests",
 		// Not "all flags", which this said and #47 made false: cobra registers
 		// --help and --version itself and bindEnv skips both, so naming the
-		// two configuration flags is the only spelling that describes what is
+		// configuration flags is the only spelling that describes what is
 		// actually configurable.
 		//
 		// Which of a flag and its variable wins, and what an empty variable
@@ -40,10 +41,10 @@ func newCmd(cfg *stressy.Cfg) *cobra.Command {
 		// README to each other, and to the flags bindEnv actually reads.
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
-The --workers and --timeout flags can each be set from the environment with the
-STRESSY_ prefix: STRESSY_WORKERS=4 or STRESSY_TIMEOUT=5m. A flag given on the
-command line beats its environment variable, and an empty variable counts as
-unset.`,
+The --workers, --timeout and --report flags can each be set from the environment
+with the STRESSY_ prefix: STRESSY_WORKERS=4, STRESSY_TIMEOUT=5m or
+STRESSY_REPORT=30s. A flag given on the command line beats its environment
+variable, and an empty variable counts as unset.`,
 		// The README's usage block, carried into the binary. --help is where a
 		// user looks before they look for a repository, and in the container
 		// image it is the only documentation that ships: the image is FROM
@@ -65,6 +66,9 @@ unset.`,
 
   # The same run, configured from the environment
   STRESSY_WORKERS=4 STRESSY_TIMEOUT=5m stressy
+
+  # A progress line every 30 seconds; without one a run prints nothing until it ends
+  stressy -t 30m -r 30s
 
   # In a container the CPU limit sets the worker count
   docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 30s`,
@@ -143,6 +147,17 @@ unset.`,
 	// the bare-seconds spelling this project has accepted since 0.1.0. See
 	// durationValue.
 	root.Flags().VarP(newDurationValue(0, &cfg.Timeout), "timeout", "t", "how long to run the stress test, as a duration such as 30s or 5m; a bare number is seconds, and 0 runs until interrupted")
+
+	// The same durationValue as --timeout, so that `--report 60` reads as
+	// seconds exactly like `-t 60` does. A third flag on a tool that has had
+	// two for its whole life, and it earns the count by defaulting to 0: what a
+	// run prints when nobody asks for this is byte-for-byte what it printed
+	// before the flag existed (#70).
+	//
+	// The usage text is ASCII, like every other string this program prints. The
+	// em dashes these comments are full of would ship in the binary here, and
+	// `--help` is read on a Windows console as readily as on a UTF-8 terminal.
+	root.Flags().VarP(newDurationValue(0, &cfg.Report), "report", "r", "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m; a bare number is seconds, and 0, the default, prints none")
 
 	return root
 }

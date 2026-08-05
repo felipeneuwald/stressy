@@ -52,10 +52,12 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 // failed six cases in this file, on a machine that had done nothing wrong but
 // use the tool (#58).
 //
-// The case below that runs real workers calls it too, though it pins both flags
-// on the command line and so cannot be reached from the environment as written:
-// there an ambient STRESSY_TIMEOUT would be worse than a failure, and this is
-// what keeps that true of any later case that stops passing `-t`.
+// The case below that runs real workers calls it too, and since #70 registered
+// a third flag it needs to: it pins --workers and --timeout on the command
+// line, so an ambient STRESSY_REPORT would reach that run and nothing else
+// would stop it. An ambient STRESSY_TIMEOUT there would be worse than a
+// failure, and this is what keeps that true of the flags the case does not pin
+// and of any later case that stops passing `-t`.
 //
 // Blank rather than unset, which is the same move docs_test.go was already
 // making: bindEnv treats an empty value as unset deliberately, because
@@ -135,7 +137,7 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	}
 }
 
-// TestFlagRegistration pins the operator-facing shape of both flags: name,
+// TestFlagRegistration pins the operator-facing shape of every flag: name,
 // shorthand, type placeholder and default are what `stressy --help` prints,
 // and the shorthands are the spelling every existing command line uses.
 func TestFlagRegistration(t *testing.T) {
@@ -147,6 +149,10 @@ func TestFlagRegistration(t *testing.T) {
 	}{
 		{name: "workers", shorthand: "w", flagType: "int", defValue: strconv.Itoa(defaultWorkers())},
 		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s"},
+		// The default is the whole of what makes a third flag affordable on a
+		// tool that has had two for its life: 0 is off, so a run nobody
+		// configures prints what it always has (#70).
+		{name: "report", shorthand: "r", flagType: "duration", defValue: "0s"},
 	}
 
 	var cfg stressy.Cfg
@@ -187,6 +193,10 @@ func TestConfigResolution(t *testing.T) {
 		args        []string
 		wantWorkers int
 		wantTimeout time.Duration
+		// Zero in every case that does not ask for a report, which is most of
+		// them: that a flag nobody set stays off is what keeps the default
+		// output what it was before #70 added it.
+		wantReport time.Duration
 	}{
 		{
 			name:        "defaults",
@@ -253,6 +263,42 @@ func TestConfigResolution(t *testing.T) {
 			wantWorkers: defaultWorkers(),
 			wantTimeout: 250 * time.Millisecond,
 		},
+		// #70. The flag is read through the same durationValue as --timeout, so
+		// a bare number is seconds here too — and it costs bindEnv nothing,
+		// which visits every flag the command registers rather than a list.
+		{
+			name:        "report flag",
+			args:        []string{"-w", "4", "-t", "5m", "--report", "30s"},
+			wantWorkers: 4,
+			wantTimeout: 5 * time.Minute,
+			wantReport:  30 * time.Second,
+		},
+		{
+			name:        "report shorthand, a bare number of seconds",
+			args:        []string{"-r", "30"},
+			wantWorkers: defaultWorkers(),
+			wantReport:  30 * time.Second,
+		},
+		{
+			name:        "report environment variable",
+			env:         map[string]string{"STRESSY_REPORT": "1m"},
+			wantWorkers: defaultWorkers(),
+			wantReport:  time.Minute,
+		},
+		{
+			name:        "report flag beats its environment variable",
+			env:         map[string]string{"STRESSY_REPORT": "1m"},
+			args:        []string{"-r", "15s"},
+			wantWorkers: defaultWorkers(),
+			wantReport:  15 * time.Second,
+		},
+		{
+			name:        "every setting from the environment at once",
+			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60", "STRESSY_REPORT": "10s"},
+			wantWorkers: 8,
+			wantTimeout: 60 * time.Second,
+			wantReport:  10 * time.Second,
+		},
 	}
 
 	for _, tt := range tests {
@@ -279,14 +325,18 @@ func TestConfigResolution(t *testing.T) {
 			if cfg.Timeout != tt.wantTimeout {
 				t.Errorf("Timeout = %s, want %s", cfg.Timeout, tt.wantTimeout)
 			}
+			if cfg.Report != tt.wantReport {
+				t.Errorf("Report = %s, want %s", cfg.Report, tt.wantReport)
+			}
 		})
 	}
 }
 
-// malformedValues are values neither flag can parse, each with the hint its
+// malformedValues are values no flag can parse, each with the hint its
 // rejection has to carry. A run is configured from the same two parsers however
-// it is spelled, so one table drives both the command-line path and the
-// environment one.
+// it is spelled — parseWorkers and parseDuration, the second of them shared by
+// --timeout and --report — so one table drives both the command-line path and
+// the environment one.
 var malformedValues = []struct {
 	name string
 	flag string
@@ -302,6 +352,19 @@ var malformedValues = []struct {
 		flag:  "-t",
 		env:   "STRESSY_TIMEOUT",
 		other: []string{"-w", "1"},
+		value: "not-a-number",
+		want:  "want a duration such as 30s or 5m",
+	},
+	// The same parser as the row above, reached through a different flag and a
+	// different variable. Worth its own row for that reason rather than
+	// despite it: what a malformed value costs an operator is the message, and
+	// the message is assembled from the flag's name and the parser's words on
+	// both paths (#70).
+	{
+		name:  "report",
+		flag:  "-r",
+		env:   "STRESSY_REPORT",
+		other: []string{"-w", "1", "-t", "100ms"},
 		value: "not-a-number",
 		want:  "want a duration such as 30s or 5m",
 	},
@@ -367,7 +430,7 @@ func TestMalformedEnvValueIsRejected(t *testing.T) {
 
 // TestMalformedFlagValueIsRejected is the command-line counterpart: pflag
 // parses these itself, so this path reported the error even before #10 — in
-// strconv's words for one of the two flags, which is what #50 is about.
+// strconv's words for --workers, which is what #50 is about.
 func TestMalformedFlagValueIsRejected(t *testing.T) {
 	for _, tt := range malformedValues {
 		t.Run(tt.name, func(t *testing.T) {

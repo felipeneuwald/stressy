@@ -70,6 +70,12 @@ const (
 	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
 	helpPointer = "Use --help for additional information"
 
+	// progressMarker is what makes a documented line a claim about the
+	// --report heartbeat rather than prose: everything carrying it is judged
+	// against progressLine instead of skipped, so a sample rewritten by hand
+	// into a shape no run prints fails rather than passing unread (#70).
+	progressMarker = " elapsed, "
+
 	// precedenceRule is the answer to the question neither the README nor
 	// `--help` used to give: which of `-w 4` and STRESSY_WORKERS=8 wins, and
 	// what an empty variable does. One sentence, held in both places against
@@ -98,6 +104,16 @@ var imageRef = regexp.MustCompile(regexp.QuoteMeta(imageRepo) + `:[\w.\-]+`)
 // prevent, in the one place the documentation quotes stressy back to itself.
 var summaryLine = regexp.MustCompile(`^Computed (\d+) hash(?:es)? in \S+ \(\d+\.\d+ hashes/s, \d+ workers?\)$`)
 
+// progressLine is the shape of the line a run started with --report prints on
+// every tick (#70). Held here for the same reason summaryLine is: the README
+// quotes the line, TestExitCodes matches a real child process's output against
+// this same pattern, and the two cannot drift apart while both read one regexp.
+//
+// The elapsed time is `\S+` rather than a duration pattern because a Duration
+// formats itself and the units it uses depend on how long the run has been
+// going — "500ms", "1m0.001s" and "1h0m0.002s" are all this field.
+var progressLine = regexp.MustCompile(`^\S+ elapsed, (\d+) hash(?:es)?, \d+\.\d+ hashes/s$`)
+
 // exitCodeRow matches a row of the README's exit-code table: the code in
 // backticks in the first cell, what it means in the second. It knows the one
 // shape that table uses, like everything else in this file.
@@ -115,6 +131,19 @@ var documentedFlag = regexp.MustCompile("(?m)^- `-(\\w), --([\\w-]+)`:")
 // unqualified claim is matched and then judged, instead of slipping past as a
 // non-match — which is the failure mode that let the drift sit there.
 var ciTriggerClaim = regexp.MustCompile("on every push(?: to `?([\\w./-]+)`?)? and (?:every )?pull request")
+
+// countedSetting matches prose counting this command's settings: "two flags",
+// "three environment variables". Both nouns, because they are the same count —
+// every flag the command registers is readable from a STRESSY_ variable — and
+// because SECURITY.md counts both in one sentence.
+//
+// numberWords is the range that sentence can spell. A project describing itself
+// as small does not count past ten, and a count written as a digit is not the
+// shape either document uses.
+var (
+	countedSetting = regexp.MustCompile(`(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten) (flags?|environment variables?)\b`)
+	numberWords    = []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+)
 
 // internalSymbol matches a symbol-qualified reference to an internal package —
 // `internal/flag.Bind` — and deliberately not the package on its own, which the
@@ -308,6 +337,36 @@ func TestDocumentedRunOutput(t *testing.T) {
 	}
 }
 
+// TestDocumentedProgressOutput is TestDocumentedRunOutput's sibling for the
+// line #70 adds, and it exists for the same reason: the README shows a sample
+// session, the numbers in it are measured and so can only be held to a shape,
+// and a format changed in the code and left alone here goes on looking correct.
+//
+// It matters more for this line than for the summary. The heartbeat is what an
+// operator greps a pod's logs for, and the README is where they learn what to
+// grep for — so a documented shape no run prints sends them looking for a line
+// that is there under another name.
+func TestDocumentedProgressOutput(t *testing.T) {
+	var found int
+
+	for i, line := range lines(t, readmePath) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, progressMarker) {
+			continue
+		}
+
+		found++
+
+		if !progressLine.MatchString(trimmed) {
+			t.Errorf("%s:%d: %q is not the progress line a --report run prints (#70)", readmePath, i+1, trimmed)
+		}
+	}
+
+	if found == 0 {
+		t.Errorf("%s shows no progress line, so nothing holds the documented heartbeat to the printed one (#70)", readmePath)
+	}
+}
+
 // TestDocumentedStopHint covers the documentation half of #52. The `--help`
 // pointer used to print on every run, so the README's sample session showed it
 // under a bounded one; it now prints only where it can help, beside the
@@ -395,6 +454,80 @@ func TestDocumentedFlagsExist(t *testing.T) {
 			t.Errorf("the command has --%s, which %s's flag list does not document", f.Name, readmePath)
 		}
 	})
+}
+
+// TestDocumentedSettingCountIsRight holds the documents that count this
+// command's settings to the number it has. Both of them were wrong the moment
+// #70 registered a third flag: CONTRIBUTING.md opened with "one command, two
+// flags, three direct dependencies" and SECURITY.md scoped its whole
+// attack-surface section on "stressy takes two flags and two environment
+// variables".
+//
+// Worth a test for the reason #61 was. A count in prose is a claim about a file
+// nobody has open while they add a flag, and narrowing or widening the command
+// produces no failure anywhere — the sentence simply stops being true, in the
+// one document a reader consults precisely because they want to know what the
+// program's surface is.
+//
+// Every count in these documents is judged, not just the ones about this
+// command: a sentence counting something else in the same words fails here
+// rather than slipping past unread, and the fix is to reword it. That is the
+// same trade release_test.go makes with a platform name it does not recognise.
+func TestDocumentedSettingCountIsRight(t *testing.T) {
+	// The steady state of a passing count is that nothing looks wrong, so a
+	// regexp that quietly stopped matching would leave this green forever. This
+	// is what says it still reads the sentence it was written for.
+	const drift = "stressy takes two flags and two environment variables"
+
+	if found := countedSetting.FindAllStringSubmatch(drift, -1); len(found) != 2 {
+		t.Fatalf("countedSetting no longer reads both counts in %q, so this test would pass on the drift it exists to catch", drift)
+	}
+
+	// The command's own flags: --help and --version are cobra's, registered by
+	// Execute rather than by newCmd, and neither is a setting a run is
+	// configured with — bindEnv skips both, so neither has a variable to count.
+	var want int
+
+	newCmd(&stressy.Cfg{}).Flags().VisitAll(func(f *pflag.Flag) {
+		if !setByCobra(f) {
+			want++
+		}
+	})
+
+	var judged int
+
+	for _, path := range []string{readmePath, contributingPath, securityPath} {
+		t.Run(path, func(t *testing.T) {
+			for _, claim := range countedSetting.FindAllStringSubmatch(unwrapped(t, path), -1) {
+				judged++
+
+				if got := slices.Index(numberWords, strings.ToLower(claim[1])); got != want {
+					t.Errorf("%s says %q, where the command has %d configurable %s", path, claim[0], want, plural(want, "flag", "flags"))
+				}
+			}
+		})
+	}
+
+	// Both documents that count today count in words, and a count rewritten as
+	// a digit or dropped altogether would leave this passing over a claim it no
+	// longer reads — which is the state the next flag would then be added into,
+	// with nothing to fail. The other tests in this file guard themselves the
+	// same way.
+	if judged == 0 {
+		t.Errorf("no document counts this command's flags any more, so this test is checking nothing; either %s and %s stopped counting them, or they now count in a shape %s cannot see", contributingPath, securityPath, countedSetting)
+	}
+}
+
+// plural picks the form of a noun that goes with n, for a failure message that
+// has to read as English however many flags the command grows. internal/stressy
+// has its own, unexported and generic over the counts its lines carry; this is
+// the one place a test in this package needs one.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+
+	return many
 }
 
 // TestPrecedenceIsDocumentedWhereUsersRead covers #64. Every flag can be set on

@@ -40,6 +40,16 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 			args: []string{"-w", "1"},
 			want: "invalid STRESSY_TIMEOUT: timeout must be 0 (indefinite) or greater",
 		},
+		// A flag registered after #51 was fixed, and covered by it without a
+		// line of its own in validate.go's mechanism: the attribution is a table
+		// entry, and the message shape is the one the two flags above already
+		// have (#70).
+		{
+			name: "report from the environment",
+			env:  map[string]string{"STRESSY_REPORT": "-30s"},
+			args: []string{"-w", "1"},
+			want: "invalid STRESSY_REPORT: report must be 0 (off) or greater",
+		},
 		// The command line names its own source by having been typed, so these
 		// two keep the message they have always had — which `stressy -w 0`
 		// exits 1 with, and TestExitCodes reads off a real process.
@@ -52,6 +62,11 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 			name: "timeout from the command line",
 			args: []string{"-w", "1", "-t", "-5s"},
 			want: "timeout must be 0 (indefinite) or greater",
+		},
+		{
+			name: "report from the command line",
+			args: []string{"-w", "1", "-r", "-30s"},
+			want: "report must be 0 (off) or greater",
 		},
 		// A flag given on the command line is never filled from the
 		// environment, so the variable is not what produced the rejected value
@@ -136,13 +151,15 @@ func TestValidateRangesAcceptsWhatARunAccepts(t *testing.T) {
 		{name: "one worker, indefinite", cfg: stressy.Cfg{Workers: 1}},
 		{name: "many workers, bounded", cfg: stressy.Cfg{Workers: 64, Timeout: time.Minute}},
 		{name: "sub-second timeout", cfg: stressy.Cfg{Workers: 1, Timeout: 250 * time.Millisecond}},
+		{name: "reporting on", cfg: stressy.Cfg{Workers: 1, Timeout: time.Minute, Report: 30 * time.Second}},
+		{name: "report longer than the run", cfg: stressy.Cfg{Workers: 1, Timeout: time.Second, Report: time.Hour}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Every flag reported as environment-filled, which is the case that
 			// would wrap a message if there were one to wrap.
-			fromEnv := map[string]string{"workers": "STRESSY_WORKERS", "timeout": "STRESSY_TIMEOUT"}
+			fromEnv := map[string]string{"workers": "STRESSY_WORKERS", "timeout": "STRESSY_TIMEOUT", "report": "STRESSY_REPORT"}
 
 			if err := validateRanges(&tt.cfg, fromEnv); err != nil {
 				t.Errorf("validateRanges(%+v) error = %v, want nil", tt.cfg, err)

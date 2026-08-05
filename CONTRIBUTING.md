@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for taking an interest. stressy is small on purpose — one command, two
+Thanks for taking an interest. stressy is small on purpose — one command, three
 flags, three direct dependencies — so most of what follows is about keeping it
 that way.
 

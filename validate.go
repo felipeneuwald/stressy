@@ -39,6 +39,7 @@ func validateRanges(cfg *stressy.Cfg, fromEnv map[string]string) error {
 	}{
 		{flag: "workers", err: stressy.ValidateWorkers(cfg.Workers)},
 		{flag: "timeout", err: stressy.ValidateTimeout(cfg.Timeout)},
+		{flag: "report", err: stressy.ValidateReport(cfg.Report)},
 	}
 
 	for _, check := range checks {

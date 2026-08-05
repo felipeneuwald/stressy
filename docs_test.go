@@ -110,6 +110,16 @@ var documentedFlag = regexp.MustCompile("(?m)^- `-(\\w), --([\\w-]+)`:")
 // non-match — which is the failure mode that let the drift sit there.
 var ciTriggerClaim = regexp.MustCompile("on every push(?: to `?([\\w./-]+)`?)? and (?:every )?pull request")
 
+// internalSymbol matches a symbol-qualified reference to an internal package —
+// `internal/flag.Bind` — and deliberately not the package on its own, which the
+// #20 removal entry names legitimately in recording that it deleted it. The
+// `.Symbol` qualifier is the whole of the difference between a claim that
+// something exists and a record that it once did.
+//
+// A path is not a symbol: `internal/stressy/stressy.go` has a slash where this
+// needs a dot, so a file reference does not match.
+var internalSymbol = regexp.MustCompile(`internal/(\w+)\.([A-Za-z]\w*)`)
+
 // dockerUser matches the Dockerfile's numeric `USER uid:gid`, and documentedUID
 // the claim the README makes about it: the phrase UID/GID `65532`, wherever it
 // appears.
@@ -532,6 +542,48 @@ func TestDocumentedCITriggerMatchesTheWorkflow(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestUnreleasedNamesPackagesThatExist covers #63. The viper-removal entry said
+// "`internal/flag.Bind` now takes an environment prefix and reads
+// `os.LookupEnv` itself" in the present tense, and the entry two bullets below
+// it recorded deleting the whole `internal/flag` package. Both ship in the same
+// release, so the released changelog would have stated as fact a function that
+// does not exist in the release it describes, and a reader following the first
+// entry would have gone looking for it and found nothing.
+//
+// That is the shape this catches: a Keep-a-Changelog entry describes the
+// release it ships in, not the intermediate state of the branch that built it,
+// and an entry written mid-branch is written against a repository that has not
+// finished changing. Only symbol-qualified references are read, since naming a
+// package in its own removal record is what a removal record is for.
+//
+// The check is on the package rather than the symbol. What it costs is a
+// renamed function inside a package that still exists; what it buys is that it
+// needs no parse of the source and cannot disagree with one.
+func TestUnreleasedNamesPackagesThatExist(t *testing.T) {
+	// The steady state of this test is finding nothing — the section names no
+	// such symbol once #63 is fixed — so a regexp that quietly stopped
+	// matching would leave it passing forever. This is what says it still
+	// recognises the reference it was written for.
+	const drift = "`internal/flag.Bind` now takes an environment prefix"
+
+	if found := internalSymbol.FindStringSubmatch(drift); found == nil || found[1] != "flag" {
+		t.Fatalf("internalSymbol no longer reads %q as a reference to internal/flag, so this test would pass on the drift it exists to catch (#63)", drift)
+	}
+
+	for i, line := range unreleased(t) {
+		for _, ref := range internalSymbol.FindAllStringSubmatch(line, -1) {
+			pkg := "internal/" + ref[1]
+
+			info, err := os.Stat(pkg)
+			if err == nil && info.IsDir() {
+				continue
+			}
+
+			t.Errorf("%s:%d describes %s.%s in the present tense, where %s does not exist at HEAD — an entry describes the release it ships in, not the branch that built it (#63)", changelogPath, i+1, pkg, ref[2], pkg)
+		}
 	}
 }
 

@@ -70,6 +70,12 @@ const (
 	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
 	helpPointer = "Use --help for additional information"
 
+	// precedenceRule is the answer to the question neither the README nor
+	// `--help` used to give: which of `-w 4` and STRESSY_WORKERS=8 wins, and
+	// what an empty variable does. One sentence, held in both places against
+	// this one copy of it (#64).
+	precedenceRule = "A flag given on the command line beats its environment variable, and an empty variable counts as unset"
+
 	// prereleaseGuard and guardEnd are what wrap a floating image tag in the
 	// release config. goreleaser skips an image or manifest whose template
 	// renders empty, so a tag inside them is published by a full release and by
@@ -387,6 +393,69 @@ func TestDocumentedFlagsExist(t *testing.T) {
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		if !documented[f.Name] {
 			t.Errorf("the command has --%s, which %s's flag list does not document", f.Name, readmePath)
+		}
+	})
+}
+
+// TestPrecedenceIsDocumentedWhereUsersRead covers #64. Every flag can be set on
+// the command line or through a STRESSY_-prefixed variable, and the README
+// documented the names, the prefix and the value formats — but nothing a user
+// read said which source wins when both are set, or that an empty variable
+// counts as unset. Both rules are deliberate and both are tested; they were
+// just written down only in env.go's comments, where an operator deciding
+// whether `stressy -w 4` overrides an exported STRESSY_WORKERS=8 will never
+// look.
+//
+// The behaviour is held elsewhere already — main_test.go's "flags take
+// precedence over environment variables" and env_test.go's "empty environment
+// value is treated as unset" are what the sentence is allowed to claim, and it
+// claims nothing beyond them. What this holds is the documentation: that both
+// places a user reads say it, and say the same thing. Writing one sentence
+// twice is what makes that worth checking, and the copy that drifts is
+// predictably `--help`, which no one re-reads — while in the FROM scratch image
+// it is the only documentation there is.
+//
+// The flag list in the same text is held to bindEnv rather than to a literal,
+// which is the other half of #64's wording note. That sentence used to say "all
+// flags", true of cobra's own --help and --version until #47 stopped the
+// environment reaching them and false afterwards. Now a flag bindEnv fills has
+// to be named there the day it is registered, and one bindEnv skips must not be
+// offered.
+func TestPrecedenceIsDocumentedWhereUsersRead(t *testing.T) {
+	// --help and --version are registered by Execute rather than by newCmd,
+	// and bindEnv's own skip is keyed on the annotation that registration puts
+	// on them, so a command without them cannot reach the second half of this.
+	cmd := newCmd(&stressy.Cfg{})
+	cmd.InitDefaultHelpFlag()
+	cmd.InitDefaultVersionFlag()
+
+	long := collapse(cmd.Long)
+
+	for _, doc := range []struct{ name, text string }{
+		{"`stressy --help`", long},
+		{readmePath, unwrapped(t, readmePath)},
+	} {
+		if !strings.Contains(doc.text, precedenceRule) {
+			t.Errorf("%s does not say %q, so a user with both a flag and its variable set has to read env.go to find out which wins (#64)", doc.name, precedenceRule)
+		}
+	}
+
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		variable := envName(envPrefix, f.Name)
+
+		if setByCobra(f) {
+			// The other direction, and the one #47 was: offering a variable
+			// the binding refuses to read is worse than documenting nothing,
+			// because it reads as an invitation to set it.
+			if strings.Contains(long, variable) {
+				t.Errorf("`stressy --help` offers %s, which bindEnv skips because cobra registered --%s itself (#47)", variable, f.Name)
+			}
+
+			return
+		}
+
+		if !strings.Contains(long, "--"+f.Name) {
+			t.Errorf("`stressy --help` says which flags read the environment without naming --%s, which bindEnv fills from %s (#64)", f.Name, variable)
 		}
 	})
 }
@@ -865,17 +934,22 @@ func dockerRun(t *testing.T, source string, fields []string) (invocation, bool) 
 	return invocation{}, false
 }
 
-// unwrapped returns a document as one line, every run of whitespace collapsed
-// to a single space.
+// collapse returns text as one line, every run of whitespace reduced to a
+// single space.
 //
-// Both documents it is used on are hard wrapped, and the claim #61 is about
-// straddles a line break in SECURITY.md, so the line-at-a-time reading the rest
-// of this file does would see half a sentence and match nothing. What it costs
+// Everything it is used on is hard wrapped — both documents, and the `--help`
+// text itself — and a sentence that straddles a line break matches nothing in
+// the line-at-a-time reading the rest of this file does. What collapsing costs
 // is the line number in a failure message, which the quoted claim replaces.
+func collapse(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// unwrapped returns a whole document as one collapsed line.
 func unwrapped(t *testing.T, path string) string {
 	t.Helper()
 
-	return strings.Join(strings.Fields(strings.Join(lines(t, path), " ")), " ")
+	return collapse(strings.Join(lines(t, path), " "))
 }
 
 // unreleased returns the changelog's lines with everything outside the

@@ -12,6 +12,9 @@ outputs:
   golangci-lint:
     description: golangci-lint version, without leading "v" (e.g. "2.12.2").
     value: ${{ steps.read.outputs.golangci-lint }}
+  golangci-lint-sha256:
+    description: SHA-256 of the golangci-lint linux-amd64 tarball for that version.
+    value: ${{ steps.read.outputs.golangci-lint-sha256 }}
   goreleaser:
     description: GoReleaser version constraint for goreleaser-action (e.g. "~> v2").
     value: ${{ steps.read.outputs.goreleaser }}
@@ -40,6 +43,7 @@ runs:
         {
           echo "go=${GO_VERSION:?missing from ${file}}"
           echo "golangci-lint=${GOLANGCI_LINT_VERSION:?missing from ${file}}"
+          echo "golangci-lint-sha256=${GOLANGCI_LINT_SHA256:?missing from ${file}}"
           echo "goreleaser=${GORELEASER_VERSION:?missing from ${file}}"
           echo "govulncheck=${GOVULNCHECK_VERSION:?missing from ${file}}"
         } >> "$GITHUB_OUTPUT"

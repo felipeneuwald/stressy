@@ -1,0 +1,12 @@
+# Check every text file out with LF endings, on every platform.
+#
+# This repository's tests read the repository back — the workflows, the
+# changelog, .goreleaser.yaml, the README — and match them line by line and
+# with `(?m)^…$` anchors. A checkout that rewrote those lines to CRLF fails
+# four of them without a byte of the repository having changed: `on:` is no
+# longer `on:`, and `var injected string` no longer ends where `$` looks for
+# it. That is what Git's default core.autocrlf=true produces on Windows, so
+# without this the Windows leg of the Build and test matrix — and any
+# contributor cloning there — would depend on a git setting nobody in the
+# project controls (#66).
+* text=auto eol=lf

@@ -16,18 +16,100 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Read-only by default, so the gate below runs with a token that can publish
+# nothing. The two write grants live on the one job that needs them (#68).
 permissions:
-  contents: write # goreleaser job: creates the release, uploads archives
-  packages: write # goreleaser job: pushes images and manifests to ghcr.io
+  contents: read
 
 jobs:
+  # A `v*` tag used to go straight to publishing: tag a commit whose CI was
+  # red, still running, or never ran at all — a tag on a branch that was never
+  # pushed — and twelve binaries reached the release page and ghcr.io :latest
+  # moved, with nothing having judged the code. The release dry run in ci.yml
+  # exists precisely so release-path changes are validated before a tag, and
+  # CONTRIBUTING's "Releasing" steps assume a green build; this is what
+  # enforces the assumption. A repository ruleset would gate earlier, server
+  # side, but it lives in repository settings — invisible in a clone and
+  # unreviewable in a pull request. This is the in-repo version; a ruleset can
+  # be layered on top.
+  gate:
+    name: Require green CI on the tagged commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # The tagged commit's check runs, and nothing else. Notably not
+      # contents: this job checks out no code, so the shell it runs cannot be
+      # one the tag brought with it.
+      checks: read
+    steps:
+      - name: Check CI conclusions for ${{ github.sha }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Every job in ci.yml, by the name it reports. Matched by prefix
+          # because the Build and test matrix reports one check per runner —
+          # "Build and test (windows-latest)" and friends. workflow_test.go
+          # holds this list against the jobs ci.yml actually defines, so a
+          # fifth job cannot be added there and silently go ungated (#66, #68).
+          required=(
+            "Lint"
+            "Build and test"
+            "Vulnerability scan"
+            "Release dry run"
+          )
+
+          # The endpoint's default filter is `latest`, which is the one that
+          # makes a re-run count: it returns the most recent run per name
+          # rather than every attempt ever made against this commit.
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
+            --jq '[.check_runs[] | {name, status, conclusion}]')
+
+          echo "Check runs on ${GITHUB_SHA}:"
+          jq -r '.[] | "  \(.name): \(.status)/\(.conclusion // "-")"' <<<"$runs"
+
+          blocked=""
+          for job in "${required[@]}"; do
+            total=$(jq --arg j "$job" '[.[] | select(.name | startswith($j))] | length' <<<"$runs")
+            green=$(jq --arg j "$job" '[.[] | select(.name | startswith($j)) | select(.status == "completed" and .conclusion == "success")] | length' <<<"$runs")
+
+            # Three states fail, not one. An absent check run is a commit CI
+            # never saw, which must not pass vacuously; an in-progress one is a
+            # tag pushed before CI finished, and failing with a re-run button
+            # is simpler than polling; the third is the ordinary red build.
+            if [ "$total" -eq 0 ]; then
+              echo "::error::no check run named '${job}' on ${GITHUB_SHA} — CI never ran for this commit"
+              blocked="${blocked}${blocked:+, }${job}"
+            elif [ "$green" -ne "$total" ]; then
+              echo "::error::'${job}' is not green on ${GITHUB_SHA} (${green}/${total} successful; still running counts as not green)"
+              blocked="${blocked}${blocked:+, }${job}"
+            fi
+          done
+
+          if [ -n "$blocked" ]; then
+            echo "::error::refusing to publish ${GITHUB_REF_NAME}: ${blocked}. Wait for CI on ${GITHUB_SHA}, fix what is red, then re-run this workflow."
+            exit 1
+          fi
+
+          echo "All ${#required[@]} CI jobs are green on ${GITHUB_SHA}."
+
   goreleaser:
     name: Release
+    # Nothing below this line runs until the gate passes. workflow_test.go
+    # fails if this edge disappears (#68).
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write # creates the release, uploads archives
+      packages: write # pushes images and manifests to ghcr.io
     steps:
+      # Pinned to commit SHAs for the reason ci.yml states at its first
+      # `uses:`. These are the refs that matter most: they run with the two
+      # write grants above (#65).
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -36,7 +118,7 @@ jobs:
         uses: ./.github/actions/load-versions
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           # From .github/versions.env. setup-go v6+ sets GOTOOLCHAIN=local, so
           # the installed Go must satisfy go.mod's directive by itself rather
@@ -47,22 +129,22 @@ jobs:
           check-latest: true
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           platforms: linux/amd64,linux/arm64
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: ${{ steps.versions.outputs.goreleaser }}

@@ -22,6 +22,16 @@ linters:
     - unused
     - ineffassign
     - misspell
+    # The codebase wraps errors — `fmt.Errorf("invalid %v: %w", …)` in env.go,
+    # `errors.Is(ctx.Err(), context.DeadlineExceeded)` in internal/stressy —
+    # and nothing above catches the two regressions that pattern invites: a
+    # `%w` downgraded to `%v`, which compiles, prints identically and silently
+    # breaks every errors.Is caller, and a direct `==` against an error that is
+    # now wrapped. govet's printf analyser checks verb validity, not wrapping.
+    - errorlint
+    # There is no //nolint in this repository today, which is the moment to
+    # require that any future one names its linter and says why.
+    - nolintlint
 
   settings:
     errcheck:

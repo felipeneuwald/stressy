@@ -37,7 +37,18 @@ go test -race ./...
 ```
 
 `golangci-lint` is pinned in `.github/versions.env`; install that version rather
-than the newest, or you may see findings CI will not.
+than the newest, or you may see findings CI will not. CI verifies the tarball it
+downloads against the SHA-256 pinned beside that version, so bumping one line
+there means bumping both.
+
+`Build and test` runs on `ubuntu-latest`, `macos-latest` and `windows-latest`. A
+release ships binaries for all three, and until #66 `go test` had only ever run
+on the first — the release dry run's twelve cross-compiles say the code builds
+everywhere, not that it runs anywhere. Lint, the vulnerability scan and the
+release dry run stay Linux-only, since their findings do not vary by runner. The
+three `//go:build unix` files stay out of the Windows build by design: signalling
+your own process is not something Windows supports, so the shutdown paths that
+need it are covered on the other two.
 
 Two further jobs need no local equivalent in the normal case. `govulncheck`
 scans the dependency graph, and a release dry run (`goreleaser check` and
@@ -122,8 +133,13 @@ For maintainers:
 1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD`
    heading. Check that what it claims is what ships — the 0.3.2 entry's
    security claim did not, and that took eighteen months to notice.
-2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` builds the
-   twelve binaries, both images and the multi-arch manifest, and publishes them.
+2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` gates on
+   CI first: every job in `ci.yml` must be green on the tagged commit, and a red
+   one, one still running, and a commit CI never ran for all stop the release
+   before anything is published (#68). Past the gate it builds the twelve
+   binaries, both images and the multi-arch manifest, and publishes them. If the
+   gate stops a tag, fix what is red and re-run the workflow — the tag does not
+   need pushing again.
 3. To rehearse the publishing half — the part `--snapshot` cannot cover, since
    it skips the registry login, the image push and the release creation — tag a
    `vX.Y.Z-rcN` pre-release first. `prerelease: auto` and the

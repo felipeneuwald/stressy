@@ -40,8 +40,10 @@ updates:
   #     reaches the tool versions in .github/versions.env, so it does not
   #     address the stale `go-version:` input in #13 or the goreleaser
   #     `version:` input in #23 — both are inputs, not refs. The pinned
-  #     GOLANGCI_LINT_VERSION has no updater either and is still a manual
-  #     bump; that file explains why the other three float instead.
+  #     GOLANGCI_LINT_VERSION has no updater either, and neither has the
+  #     GOLANGCI_LINT_SHA256 that now travels with it (#67): still a manual
+  #     bump, of two lines rather than one. That file explains why the other
+  #     three float instead.
   #   - Dependabot scans .github/workflows/ plus a root-level action.yml, and
   #     nothing else. The composite action at .github/actions/load-versions/ is
   #     not scanned. That costs nothing today — it runs plain bash and `uses:`
@@ -51,10 +53,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Actions are consumed by major tag (`actions/checkout@v7`), so almost
-    # every bump here classifies as a major and would otherwise arrive as its
-    # own pull request. Group all of them, majors included: each change is a
-    # one-line ref bump, and CI is what actually judges it.
+    # Actions are consumed by commit SHA with the release in a trailing
+    # comment (`actions/checkout@3d3c42e… # v7.0.1`, #65). Dependabot rewrites
+    # both halves and still classifies the bump by that version, so an action
+    # moving to a new major still arrives here as a major and would otherwise
+    # be its own pull request. Group all of them, majors included: each change
+    # is a one-line ref bump, and CI is what actually judges it. This entry is
+    # what keeps the pins from going stale — a SHA has no other updater.
     groups:
       github-actions:
         patterns:

@@ -44,6 +44,16 @@ const (
 	dockerfilePath    = "Dockerfile"
 	releaseConfigPath = ".goreleaser.yaml"
 	ciWorkflowPath    = ".github/workflows/ci.yml"
+	changelogPath     = "CHANGELOG.md"
+
+	// unreleasedHeading opens the section of the changelog that has not
+	// shipped yet, which is the only section these checks read. See unreleased.
+	unreleasedHeading = "## [Unreleased]"
+
+	// stressyPkg is the package the changelog quotes a coverage figure for
+	// (#62), spelled the way the changelog spells it rather than as an import
+	// path; `go test` takes "./" + this.
+	stressyPkg = "internal/stressy"
 
 	// imageRepo is this project's published image, without a tag. A reference
 	// starting with it is stressy's own and gets checked; anything else in a
@@ -814,6 +824,37 @@ func unwrapped(t *testing.T, path string) string {
 	t.Helper()
 
 	return strings.Join(strings.Fields(strings.Join(lines(t, path), " ")), " ")
+}
+
+// unreleased returns the changelog's lines with everything outside the
+// `## [Unreleased]` section blanked out, so that an index into the result is
+// still the line number in the file.
+//
+// Scoping to that section is what keeps released history out of these checks. A
+// released entry records what was true when it shipped — the state of a branch
+// mid-release, a figure measured at the tag — and holding it to today's
+// repository would fail the build for saying what a past release did, which is
+// the one thing a changelog is for. An entry moving under a version heading
+// therefore stops being checked, which is deliberate rather than a gap: the
+// last chance to check it is the release itself, where CONTRIBUTING's first
+// release step already asks whether what the section claims is what ships.
+func unreleased(t *testing.T) []string {
+	t.Helper()
+
+	src := lines(t, changelogPath)
+
+	start := slices.Index(src, unreleasedHeading)
+	if start < 0 {
+		t.Fatalf("%s has no %q heading, so there is no pending section for these checks to read (#62, #63)", changelogPath, unreleasedHeading)
+	}
+
+	section := make([]string, len(src))
+
+	for i := start + 1; i < len(src) && !strings.HasPrefix(src[i], "## "); i++ {
+		section[i] = src[i]
+	}
+
+	return section
 }
 
 // flowList reads the `["-t", "60s"]` form the Job manifest uses for args, and

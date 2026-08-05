@@ -65,6 +65,12 @@ func TestExitCodes(t *testing.T) {
 		wantCode int
 		// wantLines are prefixes that must appear on stdout, in this order.
 		wantLines []string
+		// wantNoLines are fragments that must appear nowhere on stdout. A line
+		// that stopped printing is invisible to wantLines, which is how `Use
+		// --help for additional information` came to print on every run for the
+		// life of the project with no test either asking for it or objecting
+		// (#52).
+		wantNoLines []string
 		// wantHashes requires the summary to report work actually done, which
 		// only a run long enough to finish a hash can promise.
 		wantHashes bool
@@ -82,11 +88,31 @@ func TestExitCodes(t *testing.T) {
 			wantCode: 0,
 			wantLines: []string{
 				"Starting CPU stress test with 1 worker for 2s",
-				"Use --help for additional information",
 				"Timer expired, shutting down...",
 				"Computed ",
 			},
-			wantHashes: true,
+			// A bounded run is a run whose operator has already read the flags.
+			// This is also where the line was most often read and least use:
+			// the Job log the README's Kubernetes workflow produces (#52).
+			wantNoLines: []string{helpPointer},
+			wantHashes:  true,
+		},
+		{
+			// The other half of #52, and the only place it can be seen printed
+			// by a real process: a run with no `-t` says how to stop it, where
+			// it used to announce "indefinitely" and leave the reader to guess.
+			// Ended by the signal it names, which is what makes the line's
+			// claim testable rather than decorative.
+			name:     "an indefinite run says how to stop it",
+			args:     "-w 1",
+			sig:      syscall.SIGTERM,
+			wantCode: 143,
+			wantLines: []string{
+				"Starting CPU stress test with 1 worker indefinitely",
+				stopHint,
+				"Received signal, shutting down...",
+				"Computed ",
+			},
 		},
 		{
 			// 128 + 2. What Ctrl-C at a terminal has always produced from any
@@ -135,6 +161,13 @@ func TestExitCodes(t *testing.T) {
 
 			if !containsInOrder(stdout, tt.wantLines) {
 				t.Errorf("`stressy %s` printed:\n%s\nwant these lines, in this order: %q", tt.args, strings.Join(stdout, "\n"), tt.wantLines)
+			}
+
+			printed := strings.Join(stdout, "\n")
+			for _, unwanted := range tt.wantNoLines {
+				if strings.Contains(printed, unwanted) {
+					t.Errorf("`stressy %s` printed:\n%s\nwant no %q in it (#52)", tt.args, printed, unwanted)
+				}
 			}
 
 			if tt.wantStderr == "" {

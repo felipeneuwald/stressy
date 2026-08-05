@@ -47,9 +47,15 @@ func TestBindEnv(t *testing.T) {
 		env         map[string]string
 		commandLine string
 		want        int
+		// wantSource is the variable bindEnv must report the flag as having
+		// been filled from, empty where it filled it from nothing. It is what
+		// #51 needs and what pflag's own Changed cannot answer: a flag set from
+		// the environment goes through the same Set as one given on the command
+		// line, so afterwards the two look identical.
+		wantSource string
 	}{
 		{name: "nothing set keeps the default", want: 1},
-		{name: "environment value is applied", env: map[string]string{"FLAGTEST_WORKERS": "8"}, want: 8},
+		{name: "environment value is applied", env: map[string]string{"FLAGTEST_WORKERS": "8"}, want: 8, wantSource: "FLAGTEST_WORKERS"},
 		{name: "command line wins over the environment", env: map[string]string{"FLAGTEST_WORKERS": "8"}, commandLine: "2", want: 2},
 		{name: "command line is kept when the environment is unset", commandLine: "2", want: 2},
 		// An empty value is what STRESSY_WORKERS=${WORKERS} expands to when
@@ -77,12 +83,17 @@ func TestBindEnv(t *testing.T) {
 				}
 			}
 
-			if err := bindEnv(c, testPrefix); err != nil {
+			fromEnv, err := bindEnv(c, testPrefix)
+			if err != nil {
 				t.Fatalf("bindEnv() error = %v, want nil", err)
 			}
 
 			if workers != tt.want {
 				t.Errorf("workers = %d, want %d", workers, tt.want)
+			}
+
+			if got := fromEnv["workers"]; got != tt.wantSource {
+				t.Errorf("bindEnv() filled workers from %q, want %q", got, tt.wantSource)
 			}
 		})
 	}
@@ -98,13 +109,20 @@ func TestBindEnvMalformedValue(t *testing.T) {
 	var workers int
 	c := newCmdWithIntFlag(t, "workers", &workers, 1)
 
-	err := bindEnv(c, testPrefix)
+	fromEnv, err := bindEnv(c, testPrefix)
 	if err == nil {
 		t.Fatal("bindEnv() error = nil, want the malformed value to be rejected")
 	}
 
 	if !strings.Contains(err.Error(), "FLAGTEST_WORKERS") || !strings.Contains(err.Error(), "not-a-number") {
 		t.Errorf("bindEnv() error = %q, want it to name the variable and the bad value", err)
+	}
+
+	// A flag pflag refused to set was not filled from anywhere, and reporting
+	// it as filled would have validateRanges attribute a later failure to a
+	// variable that never took effect.
+	if _, ok := fromEnv["workers"]; ok {
+		t.Errorf("bindEnv() reports workers as filled from %q, want a rejected value to be reported as no source", fromEnv["workers"])
 	}
 }
 
@@ -144,8 +162,15 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 			var workers int
 			c := newCmdWithCobraFlags(t, &workers)
 
-			if err := bindEnv(c, testPrefix); err != nil {
+			fromEnv, err := bindEnv(c, testPrefix)
+			if err != nil {
 				t.Fatalf("bindEnv() error = %v, want nil", err)
+			}
+
+			for _, name := range []string{"help", "version"} {
+				if source, ok := fromEnv[name]; ok {
+					t.Errorf("bindEnv() reports --%s as filled from %q, want cobra's own flags left out entirely", name, source)
+				}
 			}
 
 			// Left untouched, not merely left unreported: a bound value goes
@@ -214,12 +239,19 @@ func TestBindEnvMultiWordFlagName(t *testing.T) {
 	var retries int
 	c := newCmdWithIntFlag(t, "max-retries", &retries, 0)
 
-	if err := bindEnv(c, testPrefix); err != nil {
+	fromEnv, err := bindEnv(c, testPrefix)
+	if err != nil {
 		t.Fatalf("bindEnv() error = %v, want nil", err)
 	}
 
 	if retries != 3 {
 		t.Errorf("max-retries = %d, want 3", retries)
+	}
+
+	// Keyed by flag name, not by variable name: validateRanges looks the source
+	// up by the flag it is checking.
+	if got := fromEnv["max-retries"]; got != "FLAGTEST_MAX_RETRIES" {
+		t.Errorf("bindEnv() filled max-retries from %q, want %q", got, "FLAGTEST_MAX_RETRIES")
 	}
 }
 

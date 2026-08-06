@@ -35,8 +35,8 @@ builds:
     # therefore found no binary, or ran the amd64 one under emulation, which for
     # a CPU stress tool means the numbers it exists to produce are meaningless.
     # Go cross-compiles the target fine at CGO_ENABLED=0; it costs one more
-    # artefact per release. TestReleaseMatrixMatchesREADME reads these two lists
-    # back and fails if they and the README stop agreeing.
+    # artefact per release. TestReleaseMatrixIsComplete reads these two lists
+    # back and fails if either stops naming the whole cross product.
     goos:
       - linux
       - windows

@@ -37,8 +37,8 @@ func newCmd(cfg *stressy.Cfg) *cobra.Command {
 		// README because in the FROM scratch image --help is the only
 		// documentation that ships (#64).
 		//
-		// TestPrecedenceIsDocumentedWhereUsersRead holds this text and the
-		// README to each other, and to the flags bindEnv actually reads.
+		// TestPrecedenceIsDocumentedWhereUsersRead holds this text to the
+		// flags bindEnv actually reads.
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
 The --workers, --timeout and --report flags can each be set from the environment

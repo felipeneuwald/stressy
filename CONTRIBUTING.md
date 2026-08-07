@@ -109,9 +109,9 @@ deps: drop viper, reading the environment directly instead
 `.goreleaser.yaml`, so use them for changes that a user of the binary would not
 notice, and one of the others for changes they would.
 
-One issue per pull request where you can. Reference the issue number in the
-changelog entry rather than only in the commit message — the changelog is what
-someone reads a year later.
+One issue per pull request where you can. The pull request is where the
+reasoning goes — what you tried, what it cost, what you decided against — and
+it is what someone reads a year later when they want to know why.
 
 ## The changelog
 
@@ -120,11 +120,10 @@ Every change a user could notice gets an entry under `[Unreleased]` in
 Changelog](https://keepachangelog.com/en/1.0.0/): `Added`, `Changed`,
 `Deprecated`, `Removed`, `Fixed`, `Security`.
 
-Entries here are longer than the usual one-liner, deliberately. Say what changed,
-what it was before, why it is better, and what it cost — with numbers where
-there are numbers, and the issue number in parentheses at the end. An entry that
-only says what changed leaves the next person to rediscover the reasoning, which
-is how a project ends up with decisions nobody can defend.
+One line per entry, in the imperative present tense, under about fifteen words,
+saying only what a user of the binary or image can observe. The reasoning and
+the issue number belong in the pull request, not here. A change only the tests,
+CI, comments, internal layout or documentation can see gets no entry at all.
 
 ## Releasing
 

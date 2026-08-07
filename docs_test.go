@@ -174,6 +174,41 @@ func TestPrecedenceIsDocumentedWhereUsersRead(t *testing.T) {
 	})
 }
 
+// TestShellLineStripsTrailingComments covers the truncation at `#`. Every fence
+// in the tree writes its comments on their own line, so no documented line
+// reaches the case and removing the truncation would leave the rest of this
+// file green — while `stressy -w 4  # four workers`, written by whoever next
+// edits a fence, would run with `#` and `four` in its command line.
+func TestShellLineStripsTrailingComments(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		// want nil for a line that describes no invocation.
+		want []string
+	}{
+		{name: "trailing comment", line: "stressy -w 4  # four workers", want: []string{"-w", "4"}},
+		// The truncation has to run after the `$` strip, not before it.
+		{name: "after a console prompt", line: "$ stressy -t 5m # bounded", want: []string{"-t", "5m"}},
+		{name: "whole-line comment", line: "# a whole-line comment"},
+		// slices.Index matches a standalone `#` only, which is what the
+		// HasPrefix half of the skip is still there for.
+		{name: "no space after the hash", line: "#four workers"},
+		{name: "no comment", line: "stressy -w 4", want: []string{"-w", "4"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inv, ok := (&shell{}).line(t, "test", tt.line)
+			if ok != (tt.want != nil) {
+				t.Fatalf("line(%q) ok = %v, want %v", tt.line, ok, tt.want != nil)
+			}
+			if ok && !slices.Equal(inv.args, tt.want) {
+				t.Errorf("line(%q) args = %q, want %q", tt.line, inv.args, tt.want)
+			}
+		})
+	}
+}
+
 // run executes the invocation with the stress test stubbed out by newTestCmd.
 func (inv invocation) run(t *testing.T) stressy.Cfg {
 	t.Helper()
@@ -301,6 +336,11 @@ func (sh *shell) line(t *testing.T, source, line string) (invocation, bool) {
 	// A console block writes its commands as `$ stressy …`.
 	if len(fields) > 0 && fields[0] == "$" {
 		fields = fields[1:]
+	}
+	// A trailing comment is not an argument: `stressy -w 4  # four workers`
+	// would otherwise run with `#` and `four` in its command line.
+	if i := slices.Index(fields, "#"); i >= 0 {
+		fields = fields[:i]
 	}
 	if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 		return invocation{}, false

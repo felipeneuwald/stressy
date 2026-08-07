@@ -37,10 +37,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      # The tagged commit's check runs, and nothing else. Notably not
+      # This repository's workflow runs, and nothing else. Notably not
       # contents: this job checks out no code, so the shell it runs cannot be
       # one the tag brought with it.
-      checks: read
+      actions: read
     steps:
       - name: Check CI conclusions for ${{ github.sha }}
         env:
@@ -48,49 +48,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Every job in ci.yml, by the name it reports. Matched by prefix
-          # because the Build and test matrix reports one check per runner —
-          # "Build and test (windows-latest)" and friends (#66, #68).
-          required=(
-            "Lint"
-            "Build and test"
-            "Vulnerability scan"
-            "Release dry run"
-          )
+          # ci.yml's own runs, not the commit's check runs: this gate runs on
+          # the tagged commit, so its check run is in that second list, forever
+          # in_progress, and every release would deadlock on itself.
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | {status, conclusion}]')
 
-          # The endpoint's default filter is `latest`, which is the one that
-          # makes a re-run count: it returns the most recent run per name
-          # rather than every attempt ever made against this commit.
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs?per_page=100" \
-            --jq '[.check_runs[] | {name, status, conclusion}]')
+          # Load-bearing: `all` over an empty array is true, so without this a
+          # commit CI never ran for — a tag on a branch nobody pushed — passes.
+          [ "$(jq length <<<"$runs")" -gt 0 ] || { echo "::error::CI never ran for ${GITHUB_SHA}"; exit 1; }
 
-          echo "Check runs on ${GITHUB_SHA}:"
-          jq -r '.[] | "  \(.name): \(.status)/\(.conclusion // "-")"' <<<"$runs"
-
-          blocked=""
-          for job in "${required[@]}"; do
-            total=$(jq --arg j "$job" '[.[] | select(.name | startswith($j))] | length' <<<"$runs")
-            green=$(jq --arg j "$job" '[.[] | select(.name | startswith($j)) | select(.status == "completed" and .conclusion == "success")] | length' <<<"$runs")
-
-            # Three states fail, not one. An absent check run is a commit CI
-            # never saw, which must not pass vacuously; an in-progress one is a
-            # tag pushed before CI finished, and failing with a re-run button
-            # is simpler than polling; the third is the ordinary red build.
-            if [ "$total" -eq 0 ]; then
-              echo "::error::no check run named '${job}' on ${GITHUB_SHA} — CI never ran for this commit"
-              blocked="${blocked}${blocked:+, }${job}"
-            elif [ "$green" -ne "$total" ]; then
-              echo "::error::'${job}' is not green on ${GITHUB_SHA} (${green}/${total} successful; still running counts as not green)"
-              blocked="${blocked}${blocked:+, }${job}"
-            fi
-          done
-
-          if [ -n "$blocked" ]; then
-            echo "::error::refusing to publish ${GITHUB_REF_NAME}: ${blocked}. Wait for CI on ${GITHUB_SHA}, fix what is red, then re-run this workflow."
-            exit 1
-          fi
-
-          echo "All ${#required[@]} CI jobs are green on ${GITHUB_SHA}."
+          # Every run, not the latest: a cancelled or still-running attempt
+          # blocks the tag until it is re-run. On main cancel-in-progress is
+          # false, so that is rare, and it is the conservative direction.
+          jq -e 'map(.status=="completed" and .conclusion=="success") | all' <<<"$runs" >/dev/null \
+            || { echo "::error::CI is not green on ${GITHUB_SHA}"; exit 1; }
 
   goreleaser:
     name: Release
@@ -111,19 +83,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Load tool versions
-        id: versions
-        uses: ./.github/actions/load-versions
-
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # From .github/versions.env. setup-go v6+ sets GOTOOLCHAIN=local, so
-          # the installed Go must satisfy go.mod's directive by itself rather
-          # than re-execing a downloaded one — a mismatch now fails loudly
-          # instead of quietly shipping a different compiler than the logs
-          # claim, which is exactly how #13 went unnoticed.
-          go-version: ${{ steps.versions.outputs.go }}
+          # setup-go v6+ sets GOTOOLCHAIN=local, so the installed Go must
+          # satisfy go.mod's directive by itself rather than re-execing a
+          # downloaded one — a mismatch now fails loudly instead of quietly
+          # shipping a different compiler than the logs claim, which is
+          # exactly how #13 went unnoticed.
+          go-version: stable
           check-latest: true
 
       - name: Set up QEMU
@@ -145,7 +113,7 @@ jobs:
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: ${{ steps.versions.outputs.goreleaser }}
+          version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

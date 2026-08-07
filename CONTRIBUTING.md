@@ -23,8 +23,7 @@ golangci-lint fmt --diff   # formatting, as a patch you can read
 golangci-lint run ./...    # lint
 go mod tidy -diff          # the only thing keeping go.mod tidy
 go mod verify
-go build ./...
-go test -race ./...
+go test -race ./...        # also the only thing compiling every package
 ```
 
 CI runs `golangci-lint` through
@@ -32,8 +31,8 @@ CI runs `golangci-lint` through
 that exact version locally rather than the newest, or you may see findings CI
 will not. `Build and test` runs on `ubuntu-latest`, `macos-latest` and `windows-latest`;
 the `//go:build unix` files stay out of the Windows build, since signalling your
-own process is not a thing there. `govulncheck` runs as a step of `Lint`, and a
-`goreleaser` dry run as a job of its own; neither needs a local equivalent.
+own process is not a thing there. A `govulncheck` scan and a `goreleaser` dry
+run are jobs of their own; neither needs a local equivalent.
 
 ## Tests
 

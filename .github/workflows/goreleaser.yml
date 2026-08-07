@@ -51,18 +51,33 @@ jobs:
           # ci.yml's own runs, not the commit's check runs: this gate runs on
           # the tagged commit, so its check run is in that second list, forever
           # in_progress, and every release would deadlock on itself.
-          runs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
-            --jq '[.workflow_runs[] | {status, conclusion}]')
+          ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
+            --jq '.workflow_runs[].id')
 
-          # Load-bearing: `all` over an empty array is true, so without this a
-          # commit CI never ran for — a tag on a branch nobody pushed — passes.
-          [ "$(jq length <<<"$runs")" -gt 0 ] || { echo "::error::CI never ran for ${GITHUB_SHA}"; exit 1; }
+          # Load-bearing: with nothing to disagree with, every check below
+          # passes vacuously, and a tag on a branch nobody pushed publishes.
+          [ -n "$ids" ] || { echo "::error::CI never ran for ${GITHUB_SHA}"; exit 1; }
 
-          # Every run, not the latest: a cancelled or still-running attempt
-          # blocks the tag until it is re-run. On main cancel-in-progress is
-          # false, so that is rare, and it is the conservative direction.
-          jq -e 'map(.status=="completed" and .conclusion=="success") | all' <<<"$runs" >/dev/null \
-            || { echo "::error::CI is not green on ${GITHUB_SHA}"; exit 1; }
+          # Every job of every run — not the run's conclusion, which is
+          # `success` when a job is skipped as well as when it passes. Reading
+          # the run alone would publish a commit whose Release dry run never
+          # executed, which is the one job branch protection does not require
+          # either. No job is named here: whatever ci.yml declares is what has
+          # to be green, so a job added later is covered without editing this,
+          # and a job that starts skipping blocks the release until someone
+          # decides that was intended.
+          while read -r id; do
+            jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" \
+              --jq '[.jobs[] | {name, status, conclusion}]')
+
+            [ "$(jq length <<<"$jobs")" -gt 0 ] || { echo "::error::ci.yml run ${id} reports no jobs"; exit 1; }
+
+            jq -e 'map(.status == "completed" and .conclusion == "success") | all' <<<"$jobs" >/dev/null || {
+              echo "::error::CI is not green on ${GITHUB_SHA} (run ${id}):"
+              jq -r '.[] | select(.status != "completed" or .conclusion != "success") | "  \(.name): \(.status)/\(.conclusion // "-")"' <<<"$jobs"
+              exit 1
+            }
+          done <<<"$ids"
 
   goreleaser:
     name: Release

@@ -38,7 +38,23 @@ jobs:
           # `stable`, not go-version-file: go.mod — see #13.
           go-version: stable
           check-latest: true
+          # setup-go keys its cache on the hashed dependency files, so every
+          # ubuntu job that lists go.sum alone shares one key. This job pulls
+          # golangci-lint's own module graph on top of that; without a key of
+          # its own the cache is an unbreakable hit on a payload saved by a job
+          # that never fetched them, actions/cache skips the post-run save, and
+          # the whole tree is re-downloaded and recompiled on every run. Listing
+          # this workflow too separates the key and, since the pinned version
+          # below lives in this file, invalidates it on the bump that needs it.
+          cache-dependency-path: |
+            go.sum
+            .github/workflows/ci.yml
 
+      # golangci-lint arrives through the module proxy and the sum.golang.org
+      # transparency log, which is what verifies it. Not a release tarball: the
+      # download this replaced was checked against a SHA-256 that had no
+      # updater (#67), and the actions that fetch one for you check nothing.
+      #
       # Formatting first: `run` also reports unformatted files, but without a
       # patch, so running it first would fail with nothing actionable.
       - name: Check formatting
@@ -46,15 +62,6 @@ jobs:
 
       - name: Lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
-
-      # This is the only govulncheck in the repo: the nightly cron workflow was
-      # removed because GitHub silently disables schedules after 60 days of
-      # repository inactivity, which it had already done (#11). Note the two
-      # scans are not equivalent — this one fires on change, so it cannot catch
-      # a CVE published against a dependency while nobody is pushing. Weekly
-      # dependabot PRs (#22) are what restores that, since each one runs CI.
-      - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # A release ships twelve binaries and the README advertises six operating
   # systems, but `go test` only ever ran on Linux: the release dry run
@@ -106,6 +113,33 @@ jobs:
       # close, not a data race.
       - name: Test
         run: go test -race ./...
+
+  # Its own job, not a step of Lint: folding it in would put the scan behind
+  # `golangci-lint run`, so a formatting nit would mean no CVE signal at all on
+  # the run that reports it. It is also the name `main`'s branch protection
+  # requires, and a required check that stops reporting blocks every merge.
+  govulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+
+      # This is the only govulncheck in the repo: the nightly cron workflow was
+      # removed because GitHub silently disables schedules after 60 days of
+      # repository inactivity, which it had already done (#11). Note the two
+      # scans are not equivalent — this one fires on change, so it cannot catch
+      # a CVE published against a dependency while nobody is pushing. Weekly
+      # dependabot PRs (#22) are what restores that, since each one runs CI.
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # The release pipeline used to be the one part of this repository CI never
   # touched: goreleaser.yml only fires on `push: tags: ['v*']`, so a change to

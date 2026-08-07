@@ -11,49 +11,27 @@ import (
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
-// envPrefix is the prefix on the environment variables that configure stressy:
-// --workers is read from STRESSY_WORKERS, --timeout from STRESSY_TIMEOUT and
-// --report from STRESSY_REPORT.
+// envPrefix prefixes the environment variables that configure stressy.
 const envPrefix = "STRESSY"
 
 var cmd = newCmd(&stressy.Cfg{})
 
-// newCmd builds the stressy command with its flags registered against cfg. It
-// is a constructor rather than a package-level literal so that tests can build
-// an independent command over the same definitions.
+// newCmd builds the stressy command with its flags registered against cfg.
 func newCmd(cfg *stressy.Cfg) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "stressy",
 		Short: "Stressy is a simple tool to perform CPU stress tests",
-		// Not "all flags", which this said and #47 made false: cobra registers
-		// --help and --version itself and bindEnv skips both, so naming the
-		// configuration flags is the only spelling that describes what is
-		// actually configurable.
-		//
-		// Which of a flag and its variable wins, and what an empty variable
-		// does, were written down only in env.go's comments — where an
-		// operator deciding whether `-w 4` beats an exported
-		// STRESSY_WORKERS=8 will never look. They are here as well as in the
-		// README because in the FROM scratch image --help is the only
-		// documentation that ships (#64).
-		//
-		// TestPrecedenceIsDocumentedWhereUsersRead holds this text to the
-		// flags bindEnv actually reads.
+		// Duplicated from the README because in the FROM scratch image --help is
+		// the only documentation that ships.
+		// TestPrecedenceIsDocumentedWhereUsersRead holds it to the flags bindEnv reads.
 		Long: `Stressy is a simple tool to perform CPU stress tests.
 
 The --workers, --timeout and --report flags can each be set from the environment
 with the STRESSY_ prefix: STRESSY_WORKERS=4, STRESSY_TIMEOUT=5m or
 STRESSY_REPORT=30s. A flag given on the command line beats its environment
 variable, and an empty variable counts as unset.`,
-		// The README's usage block, carried into the binary. --help is where a
-		// user looks before they look for a repository, and in the container
-		// image it is the only documentation that ships: the image is FROM
-		// scratch, so there is no README beside the binary and no shell to read
-		// one with. It listed no examples at all, which left --help strictly
-		// less informative than the README it paraphrased (#27c).
-		//
 		// TestDocumentedInvocationsAreValid runs every line of this through the
-		// command, so an example naming a flag that no longer exists fails the
+		// parser, so an example naming a flag that no longer exists fails the
 		// build rather than the reader.
 		Example: `  # Load the machine until interrupted
   stressy
@@ -74,16 +52,10 @@ variable, and an empty variable counts as unset.`,
   docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 30s`,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		Version:           version,
-		// stressy takes no arguments beyond its flags. Without this cobra
-		// accepts and discards them, so `stressy 4` — a reasonable guess at
-		// the worker count — ran the default number of workers and said
-		// nothing about the 4 (#17b).
-		//
-		// Not cobra.NoArgs, which rejects them as `unknown command "4"`: this
-		// command has no subcommands, so there is no command namespace for an
-		// argument to be an unknown member of, and a user who typed a number
-		// is left looking for a command they never meant to name. The usage
-		// screen follows the error and lists the flags.
+		// Rejects operands, which cobra otherwise accepts and discards silently:
+		// `stressy 4` would run the default count and say nothing about the 4. Not
+		// cobra.NoArgs, which calls it an `unknown command` on a leaf command that
+		// has no namespace for an argument to be an unknown member of.
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				return fmt.Errorf("unexpected argument %q: stressy takes flags only", args[0])
@@ -91,17 +63,11 @@ variable, and an empty variable counts as unset.`,
 
 			return nil
 		},
-		// Every flag not given on the command line is resolved from the
-		// environment before the run starts; command-line flags win. See
-		// bindEnv.
+		// Flags not given on the command line are filled from the environment.
 		PreRunE: func(c *cobra.Command, _ []string) error {
-			// Set here rather than on the literal above, which would silence
-			// usage on every error path including the two that are genuinely
-			// usage errors: an unknown flag and an unparseable flag value both
-			// want the flag list printed, and cobra has finished parsing flags
-			// and validating operands by the time PreRunE runs. Anything that
-			// fails from this point on is a runtime error, and a runtime error
-			// followed by the whole help screen buries itself (#17a).
+			// Set here rather than on the literal above, so an unknown or
+			// unparseable flag still gets the flag list; everything that fails
+			// from this point on is a runtime error, which does not want one.
 			c.SilenceUsage = true
 
 			fromEnv, err := bindEnv(c, envPrefix)
@@ -109,26 +75,16 @@ variable, and an empty variable counts as unset.`,
 				return err
 			}
 
-			// The range check runs here rather than only inside Run because
-			// this is the last point at which the source of a value is still
-			// known — which of `-w 0` and STRESSY_WORKERS=0 produced it, and so
-			// which of them the error should name (#51). See validateRanges.
+			// The last point at which the source of a value is known. See
+			// validateRanges.
 			return validateRanges(cfg, fromEnv)
 		},
 		RunE: func(c *cobra.Command, _ []string) error {
 			err := stressy.New(*cfg).Run()
 
-			// A signal-shortened run is reported by its exit code, not as an
-			// error: Run has already printed "Received signal, shutting
-			// down..." and the run summary, and cobra printing `Error: run
-			// interrupted by interrupt` under them would report one shutdown
-			// twice, the second time as a failure (#48).
-			//
-			// Silenced here rather than on the command literal, for the same
-			// reason SilenceUsage is set in PreRunE rather than there: every
-			// other error — a rejected environment variable, an invalid worker
-			// count — is still cobra's to print, and this is the one path where
-			// the message has already been delivered.
+			// A signal-shortened run is reported by its exit code, not as an error:
+			// Run has already printed the shutdown line, and cobra would report the
+			// same shutdown twice. Silenced here alone; other errors are cobra's.
 			if _, ok := errors.AsType[*stressy.SignalError](err); ok {
 				c.SilenceErrors = true
 			}
@@ -137,48 +93,25 @@ variable, and an empty variable counts as unset.`,
 		},
 	}
 
-	// Var rather than IntVarP, for the same reason the flag below is not
-	// DurationVarP: the stock parser reports its failure as whatever strconv
-	// returned, which names a Go standard library function rather than a value
-	// the operator could have typed instead. See workersValue.
+	// Var rather than IntVarP: the stock parser reports strconv's own error, which
+	// names a Go standard library function at an operator. See workersValue.
 	root.Flags().VarP(newWorkersValue(defaultWorkers(), &cfg.Workers), "workers", "w", "number of parallel workers for CPU stress testing; the default is the number of CPUs this process can use")
 
-	// Var rather than DurationVarP: the stock pflag duration type would reject
-	// the bare-seconds spelling this project has accepted since 0.1.0. See
-	// durationValue.
+	// Var rather than DurationVarP: the stock parser rejects the bare-seconds
+	// spelling this project has accepted since 0.1.0. See durationValue.
 	root.Flags().VarP(newDurationValue(0, &cfg.Timeout), "timeout", "t", "how long to run the stress test, as a duration such as 30s or 5m; a bare number is seconds, and 0 runs until interrupted")
 
-	// The same durationValue as --timeout, so that `--report 60` reads as
-	// seconds exactly like `-t 60` does. A third flag on a tool that has had
-	// two for its whole life, and it earns the count by defaulting to 0: what a
-	// run prints when nobody asks for this is byte-for-byte what it printed
-	// before the flag existed (#70).
-	//
-	// The usage text is ASCII, like every other string this program prints. The
-	// em dashes these comments are full of would ship in the binary here, and
-	// `--help` is read on a Windows console as readily as on a UTF-8 terminal.
+	// The same durationValue as --timeout, so `--report 60` reads as seconds too.
+	// The usage text is ASCII, like every other string this program prints.
 	root.Flags().VarP(newDurationValue(0, &cfg.Report), "report", "r", "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m; a bare number is seconds, and 0, the default, prints none")
 
 	return root
 }
 
 // defaultWorkers is how many workers a bare `stressy` starts: as many as this
-// process can have running at once. One worker loads about 6% of a 16-core
-// machine, which is an odd thing for a CPU stress tool to do by default when
-// the overwhelmingly common intent is to load the machine (#24).
-//
-// runtime.GOMAXPROCS(0) rather than runtime.NumCPU(): NumCPU reports the
-// logical CPUs of the machine and knows nothing about a cgroup CPU quota, so
-// on a 64-core node under `limits.cpu: 2` it returns 64 and the run spends
-// itself being throttled instead of producing load — the containerised case
-// this tool is most often deployed into, and the case a naive default makes
-// worse rather than better. Since the go.mod language version reached 1.26 in
-// 0.4.0 — past the 1.25 that gates the behaviour (#25) — the runtime's own
-// default already accounts for the quota, the CPU affinity mask and the
-// GOMAXPROCS environment variable, and what it yields is exactly the number of
-// workers that can run simultaneously. Passing 0 reads
-// that value without setting it, so the runtime keeps updating it if the quota
-// changes.
+// process can have running at once. GOMAXPROCS(0) rather than NumCPU, which
+// ignores a cgroup CPU quota and so reports 64 on a 64-core node held to
+// `limits.cpu: 2`. Passing 0 reads the value without setting it.
 func defaultWorkers() int {
 	return runtime.GOMAXPROCS(0)
 }
@@ -189,13 +122,9 @@ func main() {
 		return
 	}
 
-	// A run a signal cut short exits 128 plus the signal number — 130 for
-	// SIGINT, 143 for SIGTERM — where it used to exit 0, indistinguishable from
-	// a run that served its whole `-t`. That distinction is the point: it is
-	// what makes a Kubernetes Job record an evicted pod as failed rather than
-	// Complete, and what gives the `backoffLimit: 0` in the README's manifest
-	// something to bound (#48). RunE has already silenced this one, so nothing
-	// has printed it.
+	// A run a signal cut short exits 128 plus the signal number, which is what
+	// makes a Kubernetes Job record an evicted pod as failed rather than
+	// Complete. RunE has already silenced this one, so nothing has printed it.
 	if sig, ok := errors.AsType[*stressy.SignalError](err); ok {
 		os.Exit(sig.ExitCode())
 	}

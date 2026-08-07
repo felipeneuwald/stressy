@@ -34,21 +34,7 @@ updates:
   # The `uses:` refs in .github/workflows/ — actions/checkout, actions/setup-go,
   # the three docker/* setup steps, goreleaser/goreleaser-action.
   #
-  # Two blind spots worth stating outright, because neither is visible from the
-  # diffs this produces:
-  #   - Only `uses:` refs get bumped, never a step's input values. This never
-  #     reaches the tool versions in .github/versions.env, so it does not
-  #     address the stale `go-version:` input in #13 or the goreleaser
-  #     `version:` input in #23 — both are inputs, not refs. The pinned
-  #     GOLANGCI_LINT_VERSION has no updater either, and neither has the
-  #     GOLANGCI_LINT_SHA256 that now travels with it (#67): still a manual
-  #     bump, of two lines rather than one. That file explains why the other
-  #     three float instead.
-  #   - Dependabot scans .github/workflows/ plus a root-level action.yml, and
-  #     nothing else. The composite action at .github/actions/load-versions/ is
-  #     not scanned. That costs nothing today — it runs plain bash and `uses:`
-  #     no other action — but if it ever calls one, it needs its own entry with
-  #     `directory: /.github/actions/load-versions`.
+  # Dependabot bumps `uses:` refs only, never a step's inputs — the inlined go-version, the goreleaser version and the @v2.12.2 in the go run line have no updater.
   - package-ecosystem: github-actions
     directory: /
     schedule:

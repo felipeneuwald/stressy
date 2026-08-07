@@ -47,3 +47,6 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # Without it a govet finding that shares a line with another linter's is
+  # dropped — the only reason a separate `go vet` step ever existed.
+  uniq-by-line: false

@@ -41,7 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Every GitHub Action is pinned to a commit SHA.
-- The golangci-lint download is verified against a SHA-256.
 - A `v*` tag publishes a release only when CI is green on that commit.
 
 ## [0.4.0] - 2026-08-03

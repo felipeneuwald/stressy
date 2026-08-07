@@ -4,8 +4,7 @@ stressy is small on purpose: one command, three flags, three direct dependencies
 
 ## Getting set up
 
-You need Go at the version in [`go.mod`](go.mod) or newer. The tool versions CI
-and the release pipeline use live in [`.github/versions.env`](.github/versions.env).
+You need Go at the version in [`go.mod`](go.mod) or newer; CI resolves `stable`.
 
 ```bash
 git clone https://github.com/felipeneuwald/stressy.git
@@ -22,18 +21,18 @@ merge:
 ```bash
 golangci-lint fmt --diff   # formatting, as a patch you can read
 golangci-lint run ./...    # lint
-go vet ./...               # not redundant: golangci-lint drops same-line findings
 go mod tidy -diff          # the only thing keeping go.mod tidy
 go mod verify
-go build ./...
-go test -race ./...
+go test -race ./...        # also the only thing compiling every package
 ```
 
-`golangci-lint` is pinned in `.github/versions.env`; use that version, not the
-newest. `Build and test` runs on `ubuntu-latest`, `macos-latest` and
-`windows-latest`; the `//go:build unix` files stay out of the Windows build,
-since signalling your own process is not a thing there. `govulncheck` and a
-`goreleaser` dry run also run in CI and need no local equivalent.
+CI runs `golangci-lint` through
+`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`; run
+that exact version locally rather than the newest, or you may see findings CI
+will not. `Build and test` runs on `ubuntu-latest`, `macos-latest` and `windows-latest`;
+the `//go:build unix` files stay out of the Windows build, since signalling your
+own process is not a thing there. A `govulncheck` scan and a `goreleaser` dry
+run are jobs of their own; neither needs a local equivalent.
 
 ## Tests
 
@@ -68,9 +67,9 @@ CI, comments, internal layout or documentation can see gets no entry at all.
 1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading,
    and check that what it claims is what ships.
 2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` gates on CI
-   — every job in `ci.yml` green on the tagged commit — then builds the twelve
-   binaries, both images and the multi-arch manifest. If the gate stops a tag,
-   fix what is red and re-run the workflow.
+   — every run of `ci.yml` on the tagged commit must have completed successfully
+   — then builds the twelve binaries, both images and the multi-arch manifest.
+   If the gate stops a tag, fix what is red and re-run the workflow.
 3. To rehearse the publishing half, tag a `vX.Y.Z-rcN` pre-release first:
    `prerelease: auto` and the `{{ if not .Prerelease }}` guards keep it off
    `:latest` and off GitHub's "Latest release".

@@ -68,13 +68,13 @@ func TestWorkflowActionsArePinnedToCommitSHAs(t *testing.T) {
 }
 
 // TestNothingPipesADownloadIntoTar covers the regression half of #67: `curl |
-// tar` is shorter than the verified form and extracts before anything checks.
+// tar` is shorter than any verified form and extracts before anything checks.
 func TestNothingPipesADownloadIntoTar(t *testing.T) {
 	for i, line := range lines(t, ciWorkflowPath) {
 		code := strings.TrimSpace(withoutComment(line))
 
 		if strings.HasPrefix(code, "|") && strings.Contains(code, "tar") {
-			t.Errorf("%s:%d pipes a download into tar, which extracts it before anything has verified it — download to a file, `sha256sum -c` it, then extract (#67)", ciWorkflowPath, i+1)
+			t.Errorf("%s:%d pipes a download into tar, which extracts it before anything has verified it; fetch the tool with `go run module@version` instead, where the checksum database vouches for what arrives (#67)", ciWorkflowPath, i+1)
 		}
 	}
 }

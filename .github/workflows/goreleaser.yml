@@ -50,9 +50,7 @@ jobs:
 
           # Every job in ci.yml, by the name it reports. Matched by prefix
           # because the Build and test matrix reports one check per runner —
-          # "Build and test (windows-latest)" and friends. workflow_test.go
-          # holds this list against the jobs ci.yml actually defines, so a
-          # fifth job cannot be added there and silently go ungated (#66, #68).
+          # "Build and test (windows-latest)" and friends (#66, #68).
           required=(
             "Lint"
             "Build and test"

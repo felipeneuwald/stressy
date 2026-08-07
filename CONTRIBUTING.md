@@ -46,7 +46,7 @@ release ships binaries for all three, and until #66 `go test` had only ever run
 on the first — the release dry run's twelve cross-compiles say the code builds
 everywhere, not that it runs anywhere. Lint, the vulnerability scan and the
 release dry run stay Linux-only, since their findings do not vary by runner. The
-three `//go:build unix` files stay out of the Windows build by design: signalling
+two `//go:build unix` files stay out of the Windows build by design: signalling
 your own process is not something Windows supports, so the shutdown paths that
 need it are covered on the other two.
 
@@ -75,8 +75,8 @@ excluded `windows/arm64`, and nobody found out, because a missing release
 artefact announces itself to no one — the release is green and the download list
 is one row shorter. So:
 
-- `release_test.go` reads the support matrix out of the README's own bullets and
-  fails if `.goreleaser.yaml` stops building it, or if an `ignore:` block
+- `release_test.go` holds `.goreleaser.yaml`'s build matrix to the whole cross
+  product a release is meant to publish, and fails if an `ignore:` block
   reappears.
 - `docs_test.go` runs every stressy invocation in the README and in `--help`
   through the real command, so an example naming a flag that no longer exists is

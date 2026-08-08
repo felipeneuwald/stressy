@@ -16,15 +16,8 @@ import (
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
-// newTestCmd builds the real command over the given configuration, but with a
-// no-op RunE: the actual RunE starts the stress test, which saturates the CPU
-// and blocks until signalled. Everything else — flag registration, the
-// environment binding in PreRunE — is what main() runs.
-// TestBoundedRunExecutesTheStressTest is the one case that keeps the real one.
-//
-// A case that sets its own STRESSY_* value has to do so after this returns:
-// clearStressyEnv runs here, and it blanks them. The environment is read at
-// Execute time, so that ordering costs nothing.
+// newTestCmd builds the real command with a no-op RunE, output discarded. A
+// case setting its own STRESSY_* value must do so after this returns.
 func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	t.Helper()
 
@@ -33,11 +26,6 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	c := NewCmd(cfg)
 	c.RunE = func(*cobra.Command, []string) error { return nil }
 
-	// Output goes nowhere: these cases read the error Execute returns, and a
-	// failing one would otherwise print its message and, for a usage error,
-	// the whole help screen into the test output. SilenceUsage is deliberately
-	// left as NewCmd sets it, since TestUsageIsSilencedOnlyForRuntimeErrors
-	// asserts on exactly that.
 	c.SilenceErrors = true
 
 	c.SetOut(io.Discard)
@@ -46,27 +34,7 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 	return c
 }
 
-// clearStressyEnv blanks every variable a run can be configured from, so that
-// these cases read the configuration in front of them rather than the one the
-// shell running `go test` happens to export. `STRESSY_WORKERS=4 go test .`
-// failed six cases in this file, on a machine that had done nothing wrong but
-// use the tool (#58).
-//
-// The case below that runs real workers calls it too, and since #70 registered
-// a third flag it needs to: it pins --workers and --timeout on the command
-// line, so an ambient STRESSY_REPORT would reach that run and nothing else
-// would stop it. An ambient STRESSY_TIMEOUT there would be worse than a
-// failure, and this is what keeps that true of the flags the case does not pin
-// and of any later case that stops passing `-t`.
-//
-// Blank rather than unset, which is the same move docs_test.go was already
-// making: bindEnv treats an empty value as unset deliberately, because
-// `STRESSY_WORKERS=${WORKERS}` with WORKERS undefined is a common shape in
-// compose files and pod specs, and t.Setenv restores what was there afterwards.
-//
-// The names are read off the command's own flags through envName, the mapping
-// the binary itself uses, so a third flag is covered by this the day it is
-// registered rather than the day someone remembers this function exists.
+// clearStressyEnv blanks every variable a run can be configured from (#58).
 func clearStressyEnv(t *testing.T) {
 	t.Helper()
 
@@ -75,29 +43,11 @@ func clearStressyEnv(t *testing.T) {
 	})
 }
 
-// TestBoundedRunExecutesTheStressTest is the one case here that runs the
-// command main() builds with the RunE main() runs, rather than the stub
-// newTestCmd swaps in. That single line — `stressy.New(*cfg).Run()` — is the
-// whole of the join between the CLI and the engine, and it was executed by
-// nothing: a refactor that stopped threading cfg through it, or built RunE over
-// a zero Cfg, would break every real invocation of this tool while the suite
-// stayed green (#53).
-//
-// Bounded on purpose, and cheaply: one worker for 50ms, plus the hash that
-// worker is inside when the deadline lands — ~0.18s on an M-series core, and
-// under 2s on a loaded CI runner under -race. TestExitCodes covers the same
-// wiring through a real process; this covers it on the platforms that test is
-// not built for, and reads the return value that one can only see as a status.
+// TestBoundedRunExecutesTheStressTest runs the real RunE, the join to the engine (#53).
 func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	const (
 		timeout = 50 * time.Millisecond
-		// budget bounds the case end to end, and is as loose as
-		// internal/stressy's stopBudget for the same reason: the hash a worker
-		// is inside measures ~0.18s on an M-series core and ~1.9s on a loaded
-		// CI runner under -race. It is reached only by the regression this case
-		// exists for — a `-t` that never arrives is an indefinite run, and
-		// without this that is a hang until the whole binary's timeout fires
-		// rather than a failure that names itself.
+		// As loose as internal/stressy's stopBudget, and for its reasons.
 		budget = 30 * time.Second
 	)
 
@@ -109,10 +59,6 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 
 	start := time.Now()
 
-	// Run prints its own lines with fmt.Println to os.Stdout rather than
-	// through cobra's writer, so they land in the test output. Left there: they
-	// are what TestExitCodes reads off a child process, and seeing them here is
-	// evidence this case ran the real thing.
 	done := make(chan error, 1)
 	go func() { done <- cmd.Execute() }()
 
@@ -125,9 +71,6 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 		t.Fatalf("Execute() did not return within %s of a run given %s", budget, timeout)
 	}
 
-	// What makes this more than "Execute returned nil": a RunE handed a stale or
-	// half-populated Cfg — one the `-t` never reached — returns nil as well,
-	// having run for some length of time other than the one asked for.
 	if elapsed := time.Since(start); elapsed < timeout {
 		t.Errorf("Execute() returned after %s, want at least the %s the run was given", elapsed, timeout)
 	}
@@ -137,22 +80,19 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	}
 }
 
-// TestFlagRegistration pins the operator-facing shape of every flag: name,
-// shorthand, type placeholder and default are what `stressy --help` prints,
-// and the shorthands are the spelling every existing command line uses.
+// TestFlagRegistration pins what `stressy --help` prints for every flag.
 func TestFlagRegistration(t *testing.T) {
 	tests := []struct {
 		name      string
 		shorthand string
 		flagType  string
 		defValue  string
+		wantUsage []string
 	}{
-		{name: "workers", shorthand: "w", flagType: "int", defValue: strconv.Itoa(defaultWorkers())},
-		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s"},
-		// The default is the whole of what makes a third flag affordable on a
-		// tool that has had two for its life: 0 is off, so a run nobody
-		// configures prints what it always has (#70).
-		{name: "report", shorthand: "r", flagType: "duration", defValue: "0s"},
+		{name: "workers", shorthand: "w", flagType: "int", defValue: strconv.Itoa(defaultWorkers()), wantUsage: []string{"parallel workers"}},
+		// An int-of-seconds description gives no reason to try a duration (#26).
+		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s", wantUsage: []string{"5m", "seconds"}},
+		{name: "report", shorthand: "r", flagType: "duration", defValue: "0s", wantUsage: []string{"5m", "seconds"}},
 	}
 
 	var cfg stressy.Cfg
@@ -174,18 +114,17 @@ func TestFlagRegistration(t *testing.T) {
 			if f.DefValue != tt.defValue {
 				t.Errorf("%s default = %q, want %q", tt.name, f.DefValue, tt.defValue)
 			}
-			if f.Usage == "" {
-				t.Errorf("%s usage = %q, want help text", tt.name, f.Usage)
+
+			for _, fragment := range tt.wantUsage {
+				if !strings.Contains(f.Usage, fragment) {
+					t.Errorf("%s usage = %q, want it to contain %q", tt.name, f.Usage, fragment)
+				}
 			}
 		})
 	}
 }
 
-// TestConfigResolution covers what a run is configured with, from flags, from
-// the environment, and from neither. The cases that expect defaultWorkers()
-// are the ones that pass no worker count: since #24 that default is the
-// machine's, so a literal here would pin the test to whatever CPU count it
-// happened to be written on.
+// TestConfigResolution covers what a run is configured with, not how durations parse.
 func TestConfigResolution(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -193,27 +132,14 @@ func TestConfigResolution(t *testing.T) {
 		args        []string
 		wantWorkers int
 		wantTimeout time.Duration
-		// Zero in every case that does not ask for a report, which is most of
-		// them: that a flag nobody set stays off is what keeps the default
-		// output what it was before #70 added it.
-		wantReport time.Duration
+		wantReport  time.Duration
 	}{
 		{
-			name:        "defaults",
-			wantWorkers: defaultWorkers(),
-			wantTimeout: 0,
-		},
-		{
-			name:        "long flags",
-			args:        []string{"--workers", "4", "--timeout", "30"},
+			name:        "flags",
+			args:        []string{"-w", "4", "-t", "30", "-r", "15s"},
 			wantWorkers: 4,
 			wantTimeout: 30 * time.Second,
-		},
-		{
-			name:        "short flags",
-			args:        []string{"-w", "4", "-t", "30"},
-			wantWorkers: 4,
-			wantTimeout: 30 * time.Second,
+			wantReport:  15 * time.Second,
 		},
 		{
 			name:        "environment variables",
@@ -236,63 +162,6 @@ func TestConfigResolution(t *testing.T) {
 			wantTimeout: 5 * time.Second,
 		},
 		{
-			name:        "duration flag",
-			args:        []string{"--timeout", "5m"},
-			wantWorkers: defaultWorkers(),
-			wantTimeout: 5 * time.Minute,
-		},
-		{
-			name:        "compound duration flag",
-			args:        []string{"-t", "1h30m"},
-			wantWorkers: defaultWorkers(),
-			wantTimeout: 90 * time.Minute,
-		},
-		// #26: STRESSY_TIMEOUT=60s is the natural thing to type, and before
-		// --timeout took a duration it was the sharpest edge of #10 — the value
-		// failed to parse, and the run that was meant to last a minute ran
-		// forever and exited 0.
-		{
-			name:        "duration environment variable",
-			env:         map[string]string{"STRESSY_TIMEOUT": "60s"},
-			wantWorkers: defaultWorkers(),
-			wantTimeout: 60 * time.Second,
-		},
-		{
-			name:        "sub-second duration",
-			args:        []string{"-t", "250ms"},
-			wantWorkers: defaultWorkers(),
-			wantTimeout: 250 * time.Millisecond,
-		},
-		// #70. The flag is read through the same durationValue as --timeout, so
-		// a bare number is seconds here too — and it costs bindEnv nothing,
-		// which visits every flag the command registers rather than a list.
-		{
-			name:        "report flag",
-			args:        []string{"-w", "4", "-t", "5m", "--report", "30s"},
-			wantWorkers: 4,
-			wantTimeout: 5 * time.Minute,
-			wantReport:  30 * time.Second,
-		},
-		{
-			name:        "report shorthand, a bare number of seconds",
-			args:        []string{"-r", "30"},
-			wantWorkers: defaultWorkers(),
-			wantReport:  30 * time.Second,
-		},
-		{
-			name:        "report environment variable",
-			env:         map[string]string{"STRESSY_REPORT": "1m"},
-			wantWorkers: defaultWorkers(),
-			wantReport:  time.Minute,
-		},
-		{
-			name:        "report flag beats its environment variable",
-			env:         map[string]string{"STRESSY_REPORT": "1m"},
-			args:        []string{"-r", "15s"},
-			wantWorkers: defaultWorkers(),
-			wantReport:  15 * time.Second,
-		},
-		{
 			name:        "every setting from the environment at once",
 			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60", "STRESSY_REPORT": "10s"},
 			wantWorkers: 8,
@@ -306,9 +175,6 @@ func TestConfigResolution(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
 
-			// After the command is built, not before: newTestCmd blanks the
-			// ambient STRESSY_* variables, and a case's own values have to
-			// survive that. See clearStressyEnv.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -332,84 +198,29 @@ func TestConfigResolution(t *testing.T) {
 	}
 }
 
-// malformedValues are values no flag can parse, each with the hint its
-// rejection has to carry. A run is configured from the same two parsers however
-// it is spelled — parseWorkers and parseDuration, the second of them shared by
-// --timeout and --report — so one table drives both the command-line path and
-// the environment one.
+// malformedValues drive both the command-line path and the environment one.
 var malformedValues = []struct {
-	name string
-	flag string
-	env  string
-	// other is a valid setting for the flag not under test, so that the value
-	// under test is the only thing wrong with the run.
-	other []string
+	name  string
+	flag  string
+	env   string
+	other []string // a valid setting for the flag not under test
 	value string
 	want  string
 }{
-	{
-		name:  "timeout",
-		flag:  "-t",
-		env:   "STRESSY_TIMEOUT",
-		other: []string{"-w", "1"},
-		value: "not-a-number",
-		want:  "want a duration such as 30s or 5m",
-	},
-	// The same parser as the row above, reached through a different flag and a
-	// different variable. Worth its own row for that reason rather than
-	// despite it: what a malformed value costs an operator is the message, and
-	// the message is assembled from the flag's name and the parser's words on
-	// both paths (#70).
-	{
-		name:  "report",
-		flag:  "-r",
-		env:   "STRESSY_REPORT",
-		other: []string{"-w", "1", "-t", "100ms"},
-		value: "not-a-number",
-		want:  "want a duration such as 30s or 5m",
-	},
-	// #50: these three used to end in `strconv.ParseInt: parsing "abc":
-	// invalid syntax`, which names a Go standard library function and no valid
-	// value — a sharp inconsistency with the flag above, whose parser was
-	// hand-written precisely to avoid it.
-	{
-		name:  "workers",
-		flag:  "-w",
-		env:   "STRESSY_WORKERS",
-		other: []string{"-t", "100ms"},
-		value: "abc",
-		want:  "want a whole number",
-	},
-	{
-		name:  "workers, a float",
-		flag:  "-w",
-		env:   "STRESSY_WORKERS",
-		other: []string{"-t", "100ms"},
-		value: "2.0",
-		want:  "want a whole number",
-	},
-	{
-		name:  "workers, past what an int holds",
-		flag:  "-w",
-		env:   "STRESSY_WORKERS",
-		other: []string{"-t", "100ms"},
-		value: "99999999999999999999",
-		want:  "out of range",
-	},
+	{name: "timeout", flag: "-t", env: "STRESSY_TIMEOUT", other: []string{"-w", "1"}, value: "not-a-number", want: "want a duration such as 30s or 5m"},
+	{name: "report", flag: "-r", env: "STRESSY_REPORT", other: []string{"-w", "1", "-t", "100ms"}, value: "not-a-number", want: "want a duration such as 30s or 5m"},
+	{name: "workers", flag: "-w", env: "STRESSY_WORKERS", other: []string{"-t", "100ms"}, value: "abc", want: "want a whole number"},
+	{name: "workers, a float", flag: "-w", env: "STRESSY_WORKERS", other: []string{"-t", "100ms"}, value: "2.0", want: "want a whole number"},
+	{name: "workers, past what an int holds", flag: "-w", env: "STRESSY_WORKERS", other: []string{"-t", "100ms"}, value: "99999999999999999999", want: "out of range"},
 }
 
-// TestMalformedEnvValueIsRejected covers issue #10: a non-numeric
-// STRESSY_TIMEOUT used to be swallowed, leaving the flag at pflag's zero value
-// and turning a run the operator had bounded into an endless one, exit code 0.
-// Since #50 it also holds the message to saying what a valid value looks like,
-// on both variables rather than on the one that had a hand-written parser.
+// TestMalformedEnvValueIsRejected covers #10: a swallowed STRESSY_TIMEOUT ran forever.
 func TestMalformedEnvValueIsRejected(t *testing.T) {
 	for _, tt := range malformedValues {
 		t.Run(tt.name, func(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
 
-			// After the command is built; see clearStressyEnv.
 			t.Setenv(tt.env, tt.value)
 
 			cmd.SetArgs(tt.other)
@@ -419,18 +230,12 @@ func TestMalformedEnvValueIsRejected(t *testing.T) {
 				t.Fatalf("Execute() with %s=%s error = nil, want the malformed value to be rejected", tt.env, tt.value)
 			}
 
-			// The message has to name the offending variable and value, or an
-			// operator staring at a failed run has nothing to go on — and it
-			// has to say what a valid value would have been, or they have
-			// nothing to correct it to.
 			checkMalformedMessage(t, err, tt.env, tt.value, tt.want)
 		})
 	}
 }
 
-// TestMalformedFlagValueIsRejected is the command-line counterpart: pflag
-// parses these itself, so this path reported the error even before #10 — in
-// strconv's words for --workers, which is what #50 is about.
+// TestMalformedFlagValueIsRejected is the command-line counterpart (#50).
 func TestMalformedFlagValueIsRejected(t *testing.T) {
 	for _, tt := range malformedValues {
 		t.Run(tt.name, func(t *testing.T) {
@@ -443,15 +248,12 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 				t.Fatalf("Execute(%s %s) error = nil, want a parse error", tt.flag, tt.value)
 			}
 
-			// pflag names the flag itself, in both spellings.
 			checkMalformedMessage(t, err, tt.flag, tt.value, tt.want)
 		})
 	}
 }
 
-// checkMalformedMessage holds a rejected value's message to the three things it
-// owes the reader: where the value came from, which value it was, and what a
-// valid one looks like — in words rather than in strconv's.
+// checkMalformedMessage: where the value came from, which one, and what is valid.
 func checkMalformedMessage(t *testing.T, err error, source, value, want string) {
 	t.Helper()
 
@@ -466,26 +268,14 @@ func checkMalformedMessage(t *testing.T, err error, source, value, want string) 
 	}
 }
 
-// TestFlagsCobraSetItselfAreNotConfigurable covers #47 through the command
-// main() runs. --help and --version exist only because Execute registers them,
-// so this is the level the bug lived at: STRESSY_VERSION is a plausible name
-// for an image-tag pin in a compose file or a CI environment, and one leaking
-// into the container aborted every run with exit 1 over a flag the operator
-// never touched. Both spellings are covered — the value that failed to parse
-// and the value that parsed and was silently discarded.
+// TestFlagsCobraSetItselfAreNotConfigurable covers #47: STRESSY_VERSION aborted runs.
 func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
 	}{
-		{
-			name: "values no bool flag can parse",
-			env:  map[string]string{"STRESSY_HELP": "yes", "STRESSY_VERSION": "0.4.0"},
-		},
-		{
-			name: "values a bool flag can parse",
-			env:  map[string]string{"STRESSY_HELP": "true", "STRESSY_VERSION": "true"},
-		},
+		{name: "values no bool flag can parse", env: map[string]string{"STRESSY_HELP": "yes", "STRESSY_VERSION": "0.4.0"}},
+		{name: "values a bool flag can parse", env: map[string]string{"STRESSY_HELP": "true", "STRESSY_VERSION": "true"}},
 	}
 
 	for _, tt := range tests {
@@ -493,10 +283,6 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
 
-			// After the command is built; see clearStressyEnv. These two are
-			// not among the variables it blanks — they are cobra's flags, which
-			// is the point of the case — but the ordering is the same one every
-			// case in this file keeps.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -509,9 +295,6 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 				t.Fatalf("Execute() error = %v, want the run the operator asked for", err)
 			}
 
-			// A run that starts, with the configuration the command line gave
-			// it: "no error" alone would also pass on a build where the value
-			// had taken effect and printed help instead of running anything.
 			if !ran {
 				t.Error("RunE was not called, want the stress test to run")
 			}
@@ -523,10 +306,7 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 	}
 }
 
-// TestFlagsCobraSetItselfWorkOnTheCommandLine is the other half of #47: what
-// the fix takes away is the environment's reach into --help and --version, not
-// the flags. Both are cobra's to act on, both print and return before RunE, and
-// neither had a test holding it to that.
+// TestFlagsCobraSetItselfWorkOnTheCommandLine is #47's other half: the flags still work.
 func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
 	tests := []struct {
 		name string
@@ -544,8 +324,6 @@ func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
 
-			// newTestCmd discards output; these cases are about what gets
-			// printed, so they read it back instead.
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
@@ -569,15 +347,7 @@ func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
 	}
 }
 
-// TestWorkersDefaultsToUsableCPUs covers #24. A CPU stress tool that loads one
-// core unless told otherwise is a surprising default, and the fix has to be
-// GOMAXPROCS rather than NumCPU or it is worse in a container than what it
-// replaced: NumCPU ignores the cgroup CPU quota, so a 64-core node under
-// `limits.cpu: 2` would start 64 workers to be throttled into 2 cores' worth
-// of bursty, unrepresentative load.
-//
-// Moving GOMAXPROCS away from NumCPU is what separates the two candidates:
-// only one of them follows.
+// TestWorkersDefaultsToUsableCPUs covers #24: NumCPU ignores a cgroup quota.
 func TestWorkersDefaultsToUsableCPUs(t *testing.T) {
 	want := 3
 	if runtime.NumCPU() == want {
@@ -599,12 +369,15 @@ func TestWorkersDefaultsToUsableCPUs(t *testing.T) {
 	if cfg.Workers != want {
 		t.Errorf("Workers = %d with GOMAXPROCS at %d and NumCPU at %d, want %d", cfg.Workers, want, runtime.NumCPU(), want)
 	}
+	if cfg.Timeout != 0 {
+		t.Errorf("Timeout = %s with nothing setting it, want 0", cfg.Timeout)
+	}
+	if cfg.Report != 0 {
+		t.Errorf("Report = %s with nothing setting it, want 0", cfg.Report)
+	}
 }
 
-// TestPositionalArgumentsAreRejected covers #17b. stressy has never read an
-// operand, and cobra's default is to accept and discard them — so `stressy 4`,
-// a reasonable guess at the worker count, ran the default number of workers
-// and said nothing about the 4.
+// TestPositionalArgumentsAreRejected covers #17b: `stressy 4` ignored the 4.
 func TestPositionalArgumentsAreRejected(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -627,9 +400,6 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 				t.Fatalf("Execute(%q) error = nil, want the argument to be rejected", tt.args)
 			}
 
-			// cobra.NoArgs would report `unknown command "4"`, which sends a
-			// user of a command with no subcommands looking for one. The
-			// message has to name what was rejected instead.
 			if !strings.Contains(err.Error(), tt.wantArg) {
 				t.Errorf("Execute(%q) error = %q, want it to name %q", tt.args, err, tt.wantArg)
 			}
@@ -637,68 +407,24 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 	}
 }
 
-// TestUsageIsSilencedOnlyForRuntimeErrors covers #17a. Every failure used to
-// print the entire help screen after its message, so `stressy -w 0` answered a
-// one-line configuration mistake with a page of flags. The fix has to keep
-// usage on the paths where it is the answer: a user who mistypes a flag name
-// wants the flag list.
-//
-// cobra parses flags and validates operands before PreRunE runs, which is what
-// makes the split available: anything failing from PreRunE on is a runtime
-// error by construction.
+// TestUsageIsSilencedOnlyForRuntimeErrors covers #17a, and the exception: a
+// mistyped flag name still wants the flag list.
 func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 	tests := []struct {
-		name string
-		env  map[string]string
-		args []string
-		// runErr is returned from RunE, standing in for the stress test's own
-		// validation — the real RunE would saturate the CPU.
+		name        string
+		env         map[string]string
+		args        []string
 		runErr      error
 		wantSilence bool
 	}{
-		{
-			name:        "unknown flag",
-			args:        []string{"--bogus"},
-			wantSilence: false,
-		},
-		{
-			name:        "invalid flag value",
-			args:        []string{"-t", "not-a-number"},
-			wantSilence: false,
-		},
-		{
-			name:        "positional argument",
-			args:        []string{"4"},
-			wantSilence: false,
-		},
-		{
-			// A bad STRESSY_TIMEOUT is a configuration error, not a spelling
-			// one, and the message already names the variable and the value.
-			name:        "rejected environment variable",
-			env:         map[string]string{"STRESSY_TIMEOUT": "not-a-number"},
-			wantSilence: true,
-		},
-		{
-			// The case #17a is named after, and the reason parseWorkers checks
-			// no range: an out-of-range value that failed in pflag's parser
-			// would be a usage error by construction, and `-w 0` would answer a
-			// one-line mistake with a page of flags again. It fails in
-			// validateRanges instead, which runs after the line above.
-			name:        "out-of-range flag value",
-			args:        []string{"-w", "0"},
-			wantSilence: true,
-		},
-		{
-			name:        "out-of-range environment variable",
-			env:         map[string]string{"STRESSY_WORKERS": "0"},
-			args:        []string{"-t", "100ms"},
-			wantSilence: true,
-		},
-		{
-			name:        "runtime failure",
-			runErr:      errors.New("workers must be 1 or greater"),
-			wantSilence: true,
-		},
+		{name: "unknown flag", args: []string{"--bogus"}},
+		{name: "invalid flag value", args: []string{"-t", "not-a-number"}},
+		{name: "positional argument", args: []string{"4"}},
+		{name: "rejected environment variable", env: map[string]string{"STRESSY_TIMEOUT": "not-a-number"}, wantSilence: true},
+		// Why parseWorkers checks no range: pflag rejecting it means usage (#17a).
+		{name: "out-of-range flag value", args: []string{"-w", "0"}, wantSilence: true},
+		{name: "out-of-range environment variable", env: map[string]string{"STRESSY_WORKERS": "0"}, args: []string{"-t", "100ms"}, wantSilence: true},
+		{name: "runtime failure", runErr: errors.New("workers must be 1 or greater"), wantSilence: true},
 	}
 
 	for _, tt := range tests {
@@ -706,17 +432,10 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
 
-			// After the command is built; see clearStressyEnv.
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
 
-			// newTestCmd discards both streams. What an operator sees is the
-			// whole of what #17a is about, so this case reads it back instead —
-			// one buffer for both, because which stream cobra routes the usage
-			// screen to is exactly the internal detail this should not depend
-			// on. SilenceErrors, which newTestCmd sets, suppresses the error
-			// line rather than the usage screen, so it leaves this alone.
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
@@ -728,44 +447,15 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 				t.Fatal("Execute() error = nil, want the case to fail")
 			}
 
-			// The behaviour, rather than the field that currently produces it:
-			// a usage screen printed by hand on some error path, or a cobra
-			// release that honours SilenceUsage differently, regresses what the
-			// operator reads while leaving the field — and a test asserting
-			// only the field — green (#60).
+			// The behaviour, not the field a hand-printed screen would leave green (#60).
 			wantUsage := !tt.wantSilence
 			if gotUsage := strings.Contains(out.String(), "Usage:"); gotUsage != wantUsage {
 				t.Errorf("Execute(%q) printed:\n%s\nwant the usage screen printed = %t", tt.args, out.String(), wantUsage)
 			}
 
-			// Kept as the second assertion: it is the mechanism, and it says so
-			// directly when the line above fails.
 			if cmd.SilenceUsage != tt.wantSilence {
 				t.Errorf("SilenceUsage = %t, want %t", cmd.SilenceUsage, tt.wantSilence)
 			}
 		})
-	}
-}
-
-// TestTimeoutHelpAdvertisesDuration guards the operator-facing half of #26: a
-// timeout that accepts "5m" but still describes itself as an int of seconds
-// leaves the reader no reason to try the duration form.
-func TestTimeoutHelpAdvertisesDuration(t *testing.T) {
-	var cfg stressy.Cfg
-	cmd := newTestCmd(t, &cfg)
-
-	f := cmd.Flags().Lookup("timeout")
-	if f == nil {
-		t.Fatal(`Lookup("timeout") = nil, want the registered flag`)
-	}
-
-	if f.Value.Type() != "duration" {
-		t.Errorf("timeout type = %q, want %q", f.Value.Type(), "duration")
-	}
-	if !strings.Contains(f.Usage, "5m") {
-		t.Errorf("timeout usage = %q, want it to show the duration form", f.Usage)
-	}
-	if !strings.Contains(f.Usage, "seconds") {
-		t.Errorf("timeout usage = %q, want it to state that a bare number is seconds", f.Usage)
 	}
 }

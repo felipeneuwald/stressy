@@ -21,10 +21,7 @@ import (
 // which is the bug it guards (#15).
 const stopBudget = 30 * time.Second
 
-// progressLine is the shape of the line a --report run prints on every tick
-// (#70). The numbers in it are measured, so what a test can hold it to is its
-// shape — the same trade docs_test.go's summaryLine makes, and for the same
-// reason: the README quotes this line back to the reader.
+// progressLine is the shape a --report tick prints; its numbers are measured.
 var progressLine = regexp.MustCompile(`^\S+ elapsed, (\d+) hash(?:es)?, \d+\.\d+ hashes/s$`)
 
 func TestValidate(t *testing.T) {
@@ -36,13 +33,7 @@ func TestValidate(t *testing.T) {
 		{name: "one worker, indefinite", cfg: Cfg{Workers: 1, Timeout: 0}},
 		{name: "one worker, one second", cfg: Cfg{Workers: 1, Timeout: time.Second}},
 		{name: "many workers", cfg: Cfg{Workers: 64, Timeout: time.Minute}},
-		// Only expressible since #26 made Timeout a time.Duration; a
-		// sub-second timeout used to round to the indefinite 0.
 		{name: "sub-second timeout", cfg: Cfg{Workers: 1, Timeout: 250 * time.Millisecond}},
-		// Zero is the default and means no progress line at all, which is what
-		// keeps a default run's output what it has always been (#70). Paired
-		// with a timeout so that it is not the "one worker, indefinite" case
-		// above spelled a second way.
 		{name: "reporting off", cfg: Cfg{Workers: 1, Timeout: 30 * time.Second, Report: 0}},
 		{name: "reporting on", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: 30 * time.Second}},
 		{name: "report longer than the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Hour}},
@@ -73,35 +64,17 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// TestStartupMessage covers #17c. The default run announced itself as "1
-// workers", which is the first line this tool prints and, on a default run,
-// the only one until it is interrupted.
+// TestStartupMessage covers #17c: the default run announced itself as "1 workers".
 func TestStartupMessage(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  Cfg
 		want string
 	}{
-		{
-			name: "one worker",
-			cfg:  Cfg{Workers: 1},
-			want: "Starting CPU stress test with 1 worker indefinitely",
-		},
-		{
-			name: "several workers",
-			cfg:  Cfg{Workers: 4},
-			want: "Starting CPU stress test with 4 workers indefinitely",
-		},
-		{
-			name: "one worker, bounded",
-			cfg:  Cfg{Workers: 1, Timeout: 5 * time.Minute},
-			want: "Starting CPU stress test with 1 worker for 5m0s",
-		},
-		{
-			name: "several workers, bounded",
-			cfg:  Cfg{Workers: 4, Timeout: 30 * time.Second},
-			want: "Starting CPU stress test with 4 workers for 30s",
-		},
+		{name: "one worker", cfg: Cfg{Workers: 1}, want: "Starting CPU stress test with 1 worker indefinitely"},
+		{name: "several workers", cfg: Cfg{Workers: 4}, want: "Starting CPU stress test with 4 workers indefinitely"},
+		{name: "one worker, bounded", cfg: Cfg{Workers: 1, Timeout: 5 * time.Minute}, want: "Starting CPU stress test with 1 worker for 5m0s"},
+		{name: "several workers, bounded", cfg: Cfg{Workers: 4, Timeout: 30 * time.Second}, want: "Starting CPU stress test with 4 workers for 30s"},
 	}
 
 	for _, tt := range tests {
@@ -113,34 +86,15 @@ func TestStartupMessage(t *testing.T) {
 	}
 }
 
-// TestHintMessage covers #52. `Use --help for additional information` printed
-// on every run, bounded ones included — every scripted invocation and every
-// Kubernetes Job log the README's workflow produces — while the hint an
-// indefinite run needs was missing: a bare `stressy` said it would run
-// "indefinitely" and never said how to stop it.
+// TestHintMessage covers #52: the pointer printed always, the stop hint never.
 func TestHintMessage(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  Cfg
 		want string
 	}{
-		// The line the issue asks for, in full. Its wording is what an operator
-		// reads, so it is pinned rather than probed: the stop instruction is a
-		// claim the output makes, and per the house rule it gets a test holding
-		// it to it.
-		{
-			name: "indefinite",
-			cfg:  Cfg{Workers: 1},
-			want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information",
-		},
-		{
-			name: "indefinite, several workers",
-			cfg:  Cfg{Workers: 4},
-			want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information",
-		},
-		// Nothing at all on a bounded run. The operator has already configured
-		// it, so the pointer is noise in the one place it is most often read
-		// from — a log, after the fact.
+		{name: "indefinite", cfg: Cfg{Workers: 1}, want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information"},
+		{name: "indefinite, several workers", cfg: Cfg{Workers: 4}, want: "Press Ctrl+C or send SIGTERM to stop. Use --help for additional information"},
 		{name: "bounded", cfg: Cfg{Workers: 1, Timeout: 5 * time.Minute}},
 		{name: "bounded, sub-second", cfg: Cfg{Workers: 4, Timeout: 250 * time.Millisecond}},
 	}
@@ -154,15 +108,8 @@ func TestHintMessage(t *testing.T) {
 	}
 }
 
-// TestHintMessageNamesEverySignalARunStopsOn keeps the stop instruction honest
-// against the list Run registers a handler for. A signal added to
-// shutdownSignals is a second way to stop a run, and a line that names one of
-// them and not the other tells an operator to reach for a shutdown that is not
-// the one their platform offers — the same class of gap as the exit code
-// documented nowhere in #48.
+// TestHintMessageNamesEverySignalARunStopsOn holds the hint to the signal list.
 func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
-	// Ctrl-C is how SIGINT is sent at a terminal, which is the spelling the
-	// line uses; anything else is named outright.
 	spellings := map[os.Signal]string{
 		syscall.SIGINT:  "Ctrl+C",
 		syscall.SIGTERM: "SIGTERM",
@@ -184,12 +131,7 @@ func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
 	}
 }
 
-// TestProgressMessage covers the line #70 adds: the one thing a long run prints
-// between its startup lines and its shutdown line, and only when an operator
-// asks for it. Table-driven for the reason TestSummaryMessage is — the line
-// carries a count that has to be spelled right and a division that has to not
-// print "+Inf" — and built as a string so the wording is checked without a
-// process to read it off.
+// TestProgressMessage covers #70's line: a count to spell and a rate to divide.
 func TestProgressMessage(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -197,58 +139,13 @@ func TestProgressMessage(t *testing.T) {
 		elapsed time.Duration
 		want    string
 	}{
-		{
-			name:    "a minute in",
-			hashes:  1320,
-			elapsed: 60001 * time.Millisecond,
-			want:    "1m0.001s elapsed, 1320 hashes, 22.0 hashes/s",
-		},
-		{
-			// Singular, which the startup line got wrong for the life of the
-			// project (#17c) and this line gets one chance at per tick.
-			name:    "one hash",
-			hashes:  1,
-			elapsed: 200 * time.Millisecond,
-			want:    "200ms elapsed, 1 hash, 5.0 hashes/s",
-		},
-		{
-			// The first tick of a short interval, before any worker has
-			// finished the ~0.18s hash it started with. Zero is the report: a
-			// heartbeat that skipped it would be silent in exactly the window
-			// an operator is watching hardest.
-			name:    "no hash finished yet",
-			hashes:  0,
-			elapsed: 50 * time.Millisecond,
-			want:    "50ms elapsed, 0 hashes, 0.0 hashes/s",
-		},
-		{
-			// Rounded like the summary's elapsed time: sub-millisecond digits
-			// are noise against a hash costing two hundred of them.
-			name:    "elapsed time is rounded",
-			hashes:  11,
-			elapsed: 2*time.Second + 1499*time.Microsecond,
-			want:    "2.001s elapsed, 11 hashes, 5.5 hashes/s",
-		},
-		{
-			// A tick a starved process delivered two minutes late, which says
-			// 7m rather than the 5m it was scheduled for. What holds that is
-			// structural rather than tested here — the report interval is never
-			// passed to this function, so there is nothing it could round to
-			// but a millisecond — and this is the case that would have to
-			// change if it ever were.
-			name:    "a tick delivered late",
-			hashes:  1650,
-			elapsed: 7 * time.Minute,
-			want:    "7m0s elapsed, 1650 hashes, 3.9 hashes/s",
-		},
-		{
-			// Not reachable from a run, whose clock is monotonic, but the rate
-			// is a division and this is the divisor that would print "+Inf".
-			name:    "no time passed at all",
-			hashes:  0,
-			elapsed: 0,
-			want:    "0s elapsed, 0 hashes, 0.0 hashes/s",
-		},
+		{name: "a minute in", hashes: 1320, elapsed: 60001 * time.Millisecond, want: "1m0.001s elapsed, 1320 hashes, 22.0 hashes/s"},
+		{name: "one hash", hashes: 1, elapsed: 200 * time.Millisecond, want: "200ms elapsed, 1 hash, 5.0 hashes/s"},
+		{name: "no hash finished yet", hashes: 0, elapsed: 50 * time.Millisecond, want: "50ms elapsed, 0 hashes, 0.0 hashes/s"},
+		{name: "elapsed time is rounded", hashes: 11, elapsed: 2*time.Second + 1499*time.Microsecond, want: "2.001s elapsed, 11 hashes, 5.5 hashes/s"},
+		// A late tick says when it fired; the interval never reaches this function.
+		{name: "a tick delivered late", hashes: 1650, elapsed: 7 * time.Minute, want: "7m0s elapsed, 1650 hashes, 3.9 hashes/s"},
+		{name: "no time passed at all", hashes: 0, elapsed: 0, want: "0s elapsed, 0 hashes, 0.0 hashes/s"},
 	}
 
 	for _, tt := range tests {
@@ -259,13 +156,7 @@ func TestProgressMessage(t *testing.T) {
 				t.Errorf("progressMessage(%d, %s) = %q, want %q", tt.hashes, tt.elapsed, got, tt.want)
 			}
 
-			// A copy of the pattern docs_test.go holds the README's sample to,
-			// and a copy is all it is: internal/stressy cannot import main, so
-			// nothing here would notice that one being edited. What keeps them
-			// honest is that each is anchored to real output rather than to
-			// the other — this one to the string progressMessage returns, that
-			// one to the line TestExitCodes reads off a child process — so a
-			// shape that changed on one side fails on the other.
+			// A copy of docs_test.go's pattern, each anchored to real output.
 			if !progressLine.MatchString(got) {
 				t.Errorf("progressMessage(%d, %s) = %q, which is not the shape the README documents", tt.hashes, tt.elapsed, got)
 			}
@@ -273,25 +164,11 @@ func TestProgressMessage(t *testing.T) {
 	}
 }
 
-// TestShutdownMessage covers #57. The two lines used to be printed in place,
-// inside the select that chooses between them, so every shutdown test in this
-// package executed one of them and none read either: swapping the two — a run
-// that hit its timer reporting a signal — left this package green, real workers
-// and -race included. The only thing that read either line was TestExitCodes,
-// which re-execs the binary and reads a child process's stdout, and which is
-// not built on Windows. A string that says which of two things happened should
-// not need a process to check.
-//
-// Which of them printed is what a log says about the run after the fact. "Timer
-// expired" is a run that served its `-t`; "Received signal" is one that
-// something outside the process ended — an eviction, a `docker stop`, a Ctrl-C
-// — which is the distinction the exit code carries too (#48), and a wrong line
-// here contradicts a right code there.
+// TestShutdownMessage covers #57: printed in place, the two lines were swappable.
 func TestShutdownMessage(t *testing.T) {
 	tests := []struct {
 		name string
-		// sig is what Run's select leaves behind: the signal that stopped the
-		// run, or nil where the deadline branch was taken.
+		// sig is nil where Run's deadline branch was taken.
 		sig  os.Signal
 		want string
 	}{
@@ -309,12 +186,7 @@ func TestShutdownMessage(t *testing.T) {
 	}
 }
 
-// TestSummaryMessage covers #49: a finished run used to say nothing about what
-// it did, so there was no confirmation the workers had worked and no number to
-// compare one machine against another. Table-driven for the same reason
-// TestStartupMessage is — the counts in it are the ones that get spelled wrong,
-// and the line is built as a string precisely so they can be checked without
-// capturing os.Stdout.
+// TestSummaryMessage covers #49: a finished run used to say nothing it did.
 func TestSummaryMessage(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -323,49 +195,11 @@ func TestSummaryMessage(t *testing.T) {
 		elapsed time.Duration
 		want    string
 	}{
-		{
-			name:    "several workers",
-			cfg:     Cfg{Workers: 4, Timeout: time.Minute},
-			hashes:  1324,
-			elapsed: 60100 * time.Millisecond,
-			want:    "Computed 1324 hashes in 1m0.1s (22.0 hashes/s, 4 workers)",
-		},
-		{
-			// Both counts singular. The startup line shipped "1 workers" for
-			// the life of the project (#17c); this line has two chances at it.
-			name:    "one worker, one hash",
-			cfg:     Cfg{Workers: 1, Timeout: 200 * time.Millisecond},
-			hashes:  1,
-			elapsed: 200 * time.Millisecond,
-			want:    "Computed 1 hash in 200ms (5.0 hashes/s, 1 worker)",
-		},
-		{
-			// A signal landing before any worker finished its first hash. The
-			// zero is the report, not a reason to print nothing.
-			name:    "interrupted before the first hash",
-			cfg:     Cfg{Workers: 2},
-			hashes:  0,
-			elapsed: 3 * time.Millisecond,
-			want:    "Computed 0 hashes in 3ms (0.0 hashes/s, 2 workers)",
-		},
-		{
-			// The measured elapsed time carries whatever precision the clock
-			// gives it, which is noise against a hash costing ~0.18s.
-			name:    "elapsed time is rounded",
-			cfg:     Cfg{Workers: 1, Timeout: 2 * time.Second},
-			hashes:  11,
-			elapsed: 2*time.Second + 1499*time.Microsecond,
-			want:    "Computed 11 hashes in 2.001s (5.5 hashes/s, 1 worker)",
-		},
-		{
-			// Not reachable from Run, whose clock is monotonic, but the rate is
-			// a division and this is the divisor that would print "+Inf".
-			name:    "no time passed at all",
-			cfg:     Cfg{Workers: 1},
-			hashes:  0,
-			elapsed: 0,
-			want:    "Computed 0 hashes in 0s (0.0 hashes/s, 1 worker)",
-		},
+		{name: "several workers", cfg: Cfg{Workers: 4, Timeout: time.Minute}, hashes: 1324, elapsed: 60100 * time.Millisecond, want: "Computed 1324 hashes in 1m0.1s (22.0 hashes/s, 4 workers)"},
+		{name: "one worker, one hash", cfg: Cfg{Workers: 1, Timeout: 200 * time.Millisecond}, hashes: 1, elapsed: 200 * time.Millisecond, want: "Computed 1 hash in 200ms (5.0 hashes/s, 1 worker)"},
+		{name: "interrupted before the first hash", cfg: Cfg{Workers: 2}, hashes: 0, elapsed: 3 * time.Millisecond, want: "Computed 0 hashes in 3ms (0.0 hashes/s, 2 workers)"},
+		{name: "elapsed time is rounded", cfg: Cfg{Workers: 1, Timeout: 2 * time.Second}, hashes: 11, elapsed: 2*time.Second + 1499*time.Microsecond, want: "Computed 11 hashes in 2.001s (5.5 hashes/s, 1 worker)"},
+		{name: "no time passed at all", cfg: Cfg{Workers: 1}, hashes: 0, elapsed: 0, want: "Computed 0 hashes in 0s (0.0 hashes/s, 1 worker)"},
 	}
 
 	for _, tt := range tests {
@@ -377,10 +211,7 @@ func TestSummaryMessage(t *testing.T) {
 	}
 }
 
-// TestSignalErrorExitCode pins the codes #48 chose, which are the whole of what
-// an operator's supervisor sees: `128 + signum` is what timeout(1), the shells
-// and every process killed by an unhandled signal report, so a Job or a script
-// can read an interrupted run without knowing anything about stressy.
+// TestSignalErrorExitCode pins #48's codes: `128 + signum`, which any Job reads.
 func TestSignalErrorExitCode(t *testing.T) {
 	tests := []struct {
 		name string
@@ -389,10 +220,7 @@ func TestSignalErrorExitCode(t *testing.T) {
 	}{
 		{name: "SIGINT", sig: syscall.SIGINT, want: 130},
 		{name: "SIGTERM", sig: syscall.SIGTERM, want: 143},
-		// Nothing in shutdownSignals reaches this, on any platform releases
-		// build for. It is here because the alternative to a fallback is a
-		// panic during shutdown, which is the failure #14 spent an issue
-		// removing.
+		// Unreachable from shutdownSignals; the alternative is a panic (#14).
 		{name: "a signal with no number", sig: unnumberedSignal{}, want: 1},
 	}
 
@@ -433,17 +261,13 @@ func captureStdout(t *testing.T, f func()) string {
 	saved := os.Stdout
 	os.Stdout = w
 
-	// Drained in the background: a run printing more than the pipe buffer holds
-	// would otherwise block inside f with nothing reading the other end.
+	// Drained in the background, or a run out-printing the pipe buffer blocks.
 	captured := make(chan string, 1)
 
 	go func() {
 		var buf strings.Builder
 
-		// Reported into the captured output rather than to t: this runs on its
-		// own goroutine, which may outlive the test that started it, and every
-		// assertion below reads what was captured — so a failure here surfaces
-		// as a line no test recognises rather than as silence.
+		// Into the captured output rather than to t, which this may outlive.
 		if _, copyErr := io.Copy(&buf, r); copyErr != nil {
 			fmt.Fprintf(&buf, "\nreading the captured output: %v", copyErr)
 		}
@@ -468,16 +292,13 @@ func captureStdout(t *testing.T, f func()) string {
 	return out
 }
 
-// unnumberedSignal is an os.Signal that is not a syscall.Signal, which is the
-// only input ExitCode cannot map.
+// unnumberedSignal is the only input ExitCode cannot map.
 type unnumberedSignal struct{}
 
 func (unnumberedSignal) String() string { return "unnumbered" }
 func (unnumberedSignal) Signal()        {}
 
-// TestShutdownSignals covers the list itself, which two things read: Run, to
-// register a handler, and TestDocumentedExitCodes, to check that the README
-// documents an exit code for every signal in it.
+// TestShutdownSignals covers the list Run and TestDocumentedExitCodes both read.
 func TestShutdownSignals(t *testing.T) {
 	got := ShutdownSignals()
 
@@ -487,8 +308,7 @@ func TestShutdownSignals(t *testing.T) {
 		}
 	}
 
-	// A copy, not the package's own slice: a caller that sorted or truncated
-	// the result would otherwise change which signals a run stops on.
+	// A copy: a caller sorting it would change which signals a run stops on.
 	if len(got) > 0 {
 		got[0] = nil
 
@@ -498,8 +318,7 @@ func TestShutdownSignals(t *testing.T) {
 	}
 }
 
-// TestRunRejectsInvalidConfig covers Run's validation gate, which fails before
-// any worker goroutine is started.
+// TestRunRejectsInvalidConfig covers Run's gate, which fails before any worker starts.
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	if err := (Cfg{Workers: 0}).Run(); err == nil {
 		t.Error("Run() error = nil, want a validation error")
@@ -510,21 +329,13 @@ func TestRunRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestStressTestCPUStopsWhenCancelled is the direct regression test for #15.
-// At bcrypt.MaxCost a worker reached its cancellation check once every ~26
-// hours, so the check below was dead code and the shutdown path it belongs to
-// could not be exercised at all.
+// TestStressTestCPUStopsWhenCancelled is #15: the check ran once every ~26 hours.
 func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 	tests := []struct {
 		name string
-		// ctx is built per case: one is cancelled before the worker reads it,
-		// the other lands while the worker is inside a hash — the case the old
-		// code could not survive, since that hash ran for a day.
+		// ctx is cancelled before the worker reads it, or mid-hash.
 		ctx func(t *testing.T) context.Context
-		// wantNoHashes is set where the count the worker publishes is decided
-		// rather than raced: a context already cancelled when the worker reads
-		// it buys no hashes, and the summary line for that run has to say 0
-		// rather than round the truth up to something that happened (#49).
+		// wantNoHashes is set where the count is decided rather than raced.
 		wantNoHashes bool
 	}{
 		{
@@ -549,9 +360,7 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The counter Run gives its workers, here with one writer and no
-			// reader until it has returned, which is what makes reading it
-			// below safe without another Load ordering it.
+			// One writer, no reader until it returns, so the read below is safe.
 			var hashes atomic.Uint64
 
 			done := make(chan struct{})
@@ -573,21 +382,11 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 	}
 }
 
-// TestStressTestCPUPublishesAsItGoes is what the heartbeat stands on: the count
-// a worker keeps has to be readable while it is still working, not only once it
-// has returned. Before #70 it was a plain local returned at the end, so a
-// mid-run reader had nothing to read — and a slot filled in only at the end
-// would leave every progress line of a long run reporting 0 hashes while the
-// machine was visibly pegged.
+// TestStressTestCPUPublishesAsItGoes: the count has to be readable mid-run (#70).
 func TestStressTestCPUPublishesAsItGoes(t *testing.T) {
 	var hashes atomic.Uint64
 
-	// Cancelled by this test once it has seen a count, rather than given a
-	// deadline of its own. A deadline here would be a second budget for how
-	// long one hash may take, and a shorter one than stopBudget: the worker
-	// would return empty-handed on a machine slow enough to need the whole of
-	// stopBudget, and the failure would read as "published nothing" when what
-	// happened was "ran out of time". One budget, and it is the package's.
+	// Cancelled on a count rather than a deadline, which would be a second budget.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -598,15 +397,11 @@ func TestStressTestCPUPublishesAsItGoes(t *testing.T) {
 		Cfg{Workers: 1}.stressTestCPU(ctx, &hashes)
 	}()
 
-	// Polled rather than slept on: what this asserts is that the count moves
-	// before the worker returns, so the read has to happen while it is running.
 	deadline := time.After(stopBudget)
 
 	for hashes.Load() == 0 {
 		select {
 		case <-done:
-			// Nothing cancels ctx until the loop is out, so the worker
-			// returning at all means it returned without publishing.
 			t.Fatal("stressTestCPU returned before it published a hash, so nothing can read its count mid-run (#70)")
 		case <-deadline:
 			t.Fatalf("stressTestCPU published no hash within %s while still running (#70)", stopBudget)
@@ -623,9 +418,7 @@ func TestStressTestCPUPublishesAsItGoes(t *testing.T) {
 	}
 }
 
-// TestRunStopsAtTimeout exercises the timeout half of Run's shutdown. Run
-// waits on its workers, so its returning is itself the evidence that every
-// worker observed the cancelled context.
+// TestRunStopsAtTimeout: Run waits on its workers, so returning is the evidence.
 func TestRunStopsAtTimeout(t *testing.T) {
 	const timeout = 10 * time.Millisecond
 
@@ -646,12 +439,7 @@ func TestRunStopsAtTimeout(t *testing.T) {
 	}
 }
 
-// TestRunDefaultOutputIsUnchanged is the promise #70 is allowed to land on: a
-// run nobody asked for a report from prints what it has always printed, and the
-// new flag costs the default output nothing. Three lines for a bounded run —
-// what it is starting, why it stopped, what it did — and nothing between them,
-// which is both the property this project has pinned repeatedly and the
-// complaint the issue opens with.
+// TestRunDefaultOutputIsUnchanged is #70's promise: three lines, nothing between.
 func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 	const timeout = 10 * time.Millisecond
 
@@ -678,26 +466,11 @@ func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestRunPrintsProgressWhenAsked is the other half of #70, at the level the
-// issue is about: with an interval set, the run says something while it is
-// running. progressMessage is checked on its own above; what this adds is the
-// wiring — that the ticker is started, that its line reaches stdout, and that it
-// happens more than once, which is the difference between a heartbeat and a
-// one-off note.
-//
-// It captures os.Stdout, where the rest of this package deliberately tests
-// strings instead. There is no string to test here: what would regress is the
-// select branch, the ticker, or the order the three kinds of line come in, and
-// none of that is observable from a return value.
+// TestRunPrintsProgressWhenAsked is #70's wiring: the ticker starts and repeats.
 func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	const (
 		report = 20 * time.Millisecond
-		// A hundred intervals' worth, against an assertion that asks for two.
-		// The margin is the point: this is a statement about recurrence, and it
-		// has to hold on a runner where the ticker's goroutine is competing
-		// with every other job on the box. A 300ms window did not — two of
-		// fifteen ticks is not enough slack to survive one scheduling stall,
-		// and it was seen printing a single line under load.
+		// A hundred intervals against an assertion asking for two; 300ms did not.
 		timeout = 2 * time.Second
 	)
 
@@ -741,18 +514,12 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 		t.Fatalf("Run() with a %s report interval over %s printed:\n%s\nwant a progress line on every tick (#70)", report, timeout, out)
 	}
 
-	// Between the startup line and the shutdown line, which is the gap the
-	// issue is named after: a heartbeat printed after the run had stopped would
-	// tell an operator watching `kubectl logs` nothing they did not already
-	// have from the summary.
 	if firstTick < startup || lastTick > shutdown {
 		t.Errorf("Run() printed:\n%s\nwant every progress line between the startup line and the shutdown line (#70)", out)
 	}
 }
 
-// TestRunIsReusable covers the third item of #14: Run closed a channel held by
-// the configuration, so a second call panicked immediately on the already-closed
-// channel. The context replacing it is built per call.
+// TestRunIsReusable covers #14's third item: a second call panicked on a channel.
 func TestRunIsReusable(t *testing.T) {
 	cfg := Cfg{Workers: 1, Timeout: time.Millisecond}
 

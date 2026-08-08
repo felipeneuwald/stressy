@@ -5,66 +5,24 @@ import (
 	"testing"
 )
 
-// TestResolveVersion walks every build path stressy has, which is the point of
-// #40: five of the six reported "0.0.0" before, including `go install`, the
-// installation method the README lists first.
+// TestResolveVersion walks every build path; five of six reported "0.0.0" (#40).
 func TestResolveVersion(t *testing.T) {
 	tests := []struct {
 		name     string
 		injected string
-		// mainVersion is debug.BuildInfo.Main.Version. The empty string with
-		// noBuildInfo unset is the "recorded, but blank" case; noBuildInfo is
-		// ReadBuildInfo failing outright.
+		// noBuildInfo is ReadBuildInfo failing outright.
 		mainVersion string
 		noBuildInfo bool
 		want        string
 	}{
-		{
-			name:        "goreleaser release",
-			injected:    "0.4.0",
-			mainVersion: "v0.4.0",
-			want:        "0.4.0",
-		},
-		{
-			// The stamped value wins even where build info disagrees: it is
-			// the version the release was cut as.
-			name:        "injected value beats build info",
-			injected:    "0.4.0",
-			mainVersion: "v0.3.3",
-			want:        "0.4.0",
-		},
-		{
-			name:        "go install at a tag",
-			mainVersion: "v0.4.0",
-			want:        "0.4.0",
-		},
-		{
-			name:        "go build on a dirty tree",
-			mainVersion: "v0.4.0+dirty",
-			want:        "0.4.0+dirty",
-		},
-		{
-			// HEAD past the last tag: the toolchain records a pseudo-version,
-			// which identifies the exact commit and is kept whole.
-			name:        "go build past the last tag",
-			mainVersion: "v0.4.1-0.20260803201049-f12897df761f",
-			want:        "0.4.1-0.20260803201049-f12897df761f",
-		},
-		{
-			name:        "go build -buildvcs=false",
-			mainVersion: "(devel)",
-			want:        devVersion,
-		},
-		{
-			name:        "build info recorded no version",
-			mainVersion: "",
-			want:        devVersion,
-		},
-		{
-			name:        "no build info at all",
-			noBuildInfo: true,
-			want:        devVersion,
-		},
+		{name: "goreleaser release", injected: "0.4.0", mainVersion: "v0.4.0", want: "0.4.0"},
+		{name: "injected value beats build info", injected: "0.4.0", mainVersion: "v0.3.3", want: "0.4.0"},
+		{name: "go install at a tag", mainVersion: "v0.4.0", want: "0.4.0"},
+		{name: "go build on a dirty tree", mainVersion: "v0.4.0+dirty", want: "0.4.0+dirty"},
+		{name: "go build past the last tag", mainVersion: "v0.4.1-0.20260803201049-f12897df761f", want: "0.4.1-0.20260803201049-f12897df761f"},
+		{name: "go build -buildvcs=false", mainVersion: "(devel)", want: devVersion},
+		{name: "build info recorded no version", mainVersion: "", want: devVersion},
+		{name: "no build info at all", noBuildInfo: true, want: devVersion},
 	}
 
 	for _, tt := range tests {
@@ -81,11 +39,7 @@ func TestResolveVersion(t *testing.T) {
 	}
 }
 
-// TestVersionIsReported guards the whole of what #40 is about at the level the
-// user sees it: whatever this binary was built by, `--version` has to print
-// something that identifies it. The test binary itself is the awkward case —
-// `go test` records no module version for it — so this asserts the property
-// that holds on every path rather than a value.
+// TestVersionIsReported asserts the property: `go test` records no version.
 func TestVersionIsReported(t *testing.T) {
 	if version == "" {
 		t.Fatal("version = \"\", want a version or the development placeholder")

@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/cobra"
 )
 
 func TestParseDuration(t *testing.T) {
@@ -46,8 +44,6 @@ func TestParseDuration(t *testing.T) {
 				if err == nil {
 					t.Fatalf("parseDuration(%q) error = nil, want an error", tt.in)
 				}
-				// An operator staring at a rejected value needs to see which
-				// value was rejected.
 				if !strings.Contains(err.Error(), strconv.Quote(tt.in)) {
 					t.Errorf("parseDuration(%q) error = %q, want it to name the value", tt.in, err)
 				}
@@ -61,54 +57,5 @@ func TestParseDuration(t *testing.T) {
 				t.Errorf("parseDuration(%q) = %s, want %s", tt.in, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestDurationValue covers durationValue as pflag sees it: the default written
-// through the caller's pointer, the placeholder printed in help text, and both
-// accepted spellings surviving a Set through a registered flag.
-func TestDurationValue(t *testing.T) {
-	var timeout time.Duration
-
-	c := &cobra.Command{Use: "test"}
-	c.Flags().VarP(newDurationValue(90*time.Second, &timeout), "timeout", "t", "how long to run")
-
-	f := c.Flags().Lookup("timeout")
-	if f == nil {
-		t.Fatal(`Lookup("timeout") = nil, want the registered flag`)
-	}
-	// pflag prints Type() as the value placeholder in help output.
-	if f.Value.Type() != "duration" {
-		t.Errorf("timeout type = %q, want %q", f.Value.Type(), "duration")
-	}
-	if f.DefValue != "1m30s" {
-		t.Errorf("timeout default = %q, want %q", f.DefValue, "1m30s")
-	}
-	if timeout != 90*time.Second {
-		t.Errorf("timeout = %s, want the default written through the pointer", timeout)
-	}
-
-	if err := c.Flags().Set("timeout", "5m"); err != nil {
-		t.Fatalf("Set() error = %v, want nil", err)
-	}
-	if timeout != 5*time.Minute {
-		t.Errorf("timeout = %s, want %s", timeout, 5*time.Minute)
-	}
-
-	if err := c.Flags().Set("timeout", "300"); err != nil {
-		t.Fatalf("Set() error = %v, want the bare-seconds form to keep working", err)
-	}
-	if timeout != 300*time.Second {
-		t.Errorf("timeout = %s, want %s", timeout, 300*time.Second)
-	}
-
-	// pflag wraps the parse error, so both the flag name and the offending
-	// value have to survive to reach the operator.
-	err := c.Flags().Set("timeout", "5 minutes")
-	if err == nil {
-		t.Fatal("Set() error = nil, want a parse error")
-	}
-	if !strings.Contains(err.Error(), "timeout") || !strings.Contains(err.Error(), "5 minutes") {
-		t.Errorf("Set() error = %q, want it to name the flag and the bad value", err)
 	}
 }

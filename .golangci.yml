@@ -23,7 +23,7 @@ linters:
     - ineffassign
     - misspell
     # The codebase wraps errors — `fmt.Errorf("invalid %v: %w", …)` in
-    # internal/cli/env.go, `errors.Is(ctx.Err(), context.DeadlineExceeded)` in
+    # internal/cli/config.go, `errors.Is(ctx.Err(), context.DeadlineExceeded)` in
     # internal/stressy — and nothing above catches the two regressions that
     # pattern invites: a `%w` downgraded to `%v`, which compiles, prints
     # identically and silently breaks every errors.Is caller, and a direct `==`

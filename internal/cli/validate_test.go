@@ -41,9 +41,9 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 			want: "invalid STRESSY_TIMEOUT: timeout must be 0 (indefinite) or greater",
 		},
 		// A flag registered after #51 was fixed, and covered by it without a
-		// line of its own in validate.go's mechanism: the attribution is a table
-		// entry, and the message shape is the one the two flags above already
-		// have (#70).
+		// line of its own: the attribution is keyed by the setting name the
+		// validator returns, and the message shape is the one the two flags
+		// above already have (#70).
 		{
 			name: "report from the environment",
 			env:  map[string]string{"STRESSY_REPORT": "-30s"},

@@ -22,7 +22,7 @@ builds:
     # their version too (#40). The names have to agree, and a `-X` naming a
     # variable that does not exist is dropped silently rather than failing the
     # link, so TestLdflagsVariableMatchesGoreleaser checks this line against
-    # version.go.
+    # main.go.
     ldflags:
       - -s -w -X main.injected={{.Version}}
     # The other half of a reproducible build: pin the artefact mtimes to the

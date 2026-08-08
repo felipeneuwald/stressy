@@ -1,19 +1,15 @@
-package main
+package cli
 
 import (
 	"runtime/debug"
 	"strings"
 )
 
-// injected is the version stamped into release binaries through
-// `-ldflags "-X main.injected=..."`; every other build path leaves it empty. The
-// name has to match .goreleaser.yaml and nothing enforces that at build time, so
-// TestLdflagsVariableMatchesGoreleaser matches the declaration below as text —
-// keep it on one `var injected string` line.
-var injected string
-
-// version is what `stressy --version` prints, resolved at package initialisation.
-var version = resolveVersion(injected, buildInfo())
+// version is what `stressy --version` prints. Resolved here from build info
+// alone, so that it is never empty whoever builds the command — cobra registers
+// no --version flag at all for an empty one — and re-resolved by Main with the
+// value the root main.go holds.
+var version = resolveVersion("", buildInfo())
 
 // devVersion is reported when nothing in the binary knows what it is. "devel"
 // says that plainly, where the "0.0.0" it replaces looked like a real release.

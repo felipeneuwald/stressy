@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"strings"
@@ -33,7 +33,7 @@ func newCmdWithCobraFlags(t *testing.T, p *int) *cobra.Command {
 	c := newCmdWithIntFlag(t, "workers", p, 1)
 
 	// InitDefaultVersionFlag registers nothing unless Version is set, which is
-	// the condition newCmd meets by setting it on the root command.
+	// the condition NewCmd meets by setting it on the root command.
 	c.Version = "0.0.0-test"
 	c.InitDefaultHelpFlag()
 	c.InitDefaultVersionFlag()
@@ -212,7 +212,7 @@ func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
 			t.Fatalf("Lookup(%q) = nil, want cobra to have registered its flag", name)
 		}
 
-		if !setByCobra(f) {
+		if !SetByCobra(f) {
 			t.Errorf("--%s carries no %s annotation, which is how bindEnv knows to leave it alone (#47)", name, cobra.FlagSetByCobraAnnotation)
 		}
 	}
@@ -225,7 +225,7 @@ func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
 		t.Fatal(`Lookup("workers") = nil, want the registered flag`)
 	}
 
-	if setByCobra(f) {
+	if SetByCobra(f) {
 		t.Errorf("--workers carries the %s annotation, so the exclusion would swallow stressy's own flags", cobra.FlagSetByCobraAnnotation)
 	}
 }

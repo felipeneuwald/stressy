@@ -27,21 +27,7 @@ const stopBudget = 30 * time.Second
 // reason: the README quotes this line back to the reader.
 var progressLine = regexp.MustCompile(`^\S+ elapsed, (\d+) hash(?:es)?, \d+\.\d+ hashes/s$`)
 
-func TestNew(t *testing.T) {
-	s := New(Cfg{Workers: 4, Timeout: 30 * time.Second, Report: 5 * time.Second})
-
-	if s.workers != 4 {
-		t.Errorf("workers = %d, want 4", s.workers)
-	}
-	if s.timeout != 30*time.Second {
-		t.Errorf("timeout = %s, want %s", s.timeout, 30*time.Second)
-	}
-	if s.report != 5*time.Second {
-		t.Errorf("report = %s, want %s", s.report, 5*time.Second)
-	}
-}
-
-func TestValidateConfig(t *testing.T) {
+func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     Cfg
@@ -68,20 +54,20 @@ func TestValidateConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := New(tt.cfg).validateConfig()
+			_, err := tt.cfg.Validate()
 
 			if tt.wantErr == "" {
 				if err != nil {
-					t.Fatalf("validateConfig() error = %v, want nil", err)
+					t.Fatalf("Validate() error = %v, want nil", err)
 				}
 				return
 			}
 
 			if err == nil {
-				t.Fatalf("validateConfig() error = nil, want %q", tt.wantErr)
+				t.Fatalf("Validate() error = nil, want %q", tt.wantErr)
 			}
 			if err.Error() != tt.wantErr {
-				t.Errorf("validateConfig() error = %q, want %q", err, tt.wantErr)
+				t.Errorf("Validate() error = %q, want %q", err, tt.wantErr)
 			}
 		})
 	}
@@ -120,7 +106,7 @@ func TestStartupMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := New(tt.cfg).startupMessage(); got != tt.want {
+			if got := tt.cfg.startupMessage(); got != tt.want {
 				t.Errorf("startupMessage() = %q, want %q", got, tt.want)
 			}
 		})
@@ -161,7 +147,7 @@ func TestHintMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := New(tt.cfg).hintMessage(); got != tt.want {
+			if got := tt.cfg.hintMessage(); got != tt.want {
 				t.Errorf("hintMessage() = %q, want %q", got, tt.want)
 			}
 		})
@@ -182,7 +168,7 @@ func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
 		syscall.SIGTERM: "SIGTERM",
 	}
 
-	hint := New(Cfg{Workers: 1}).hintMessage()
+	hint := Cfg{Workers: 1}.hintMessage()
 
 	for _, sig := range ShutdownSignals() {
 		want, ok := spellings[sig]
@@ -384,7 +370,7 @@ func TestSummaryMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := New(tt.cfg).summaryMessage(tt.hashes, tt.elapsed); got != tt.want {
+			if got := tt.cfg.summaryMessage(tt.hashes, tt.elapsed); got != tt.want {
 				t.Errorf("summaryMessage(%d, %s) = %q, want %q", tt.hashes, tt.elapsed, got, tt.want)
 			}
 		})
@@ -515,11 +501,11 @@ func TestShutdownSignals(t *testing.T) {
 // TestRunRejectsInvalidConfig covers Run's validation gate, which fails before
 // any worker goroutine is started.
 func TestRunRejectsInvalidConfig(t *testing.T) {
-	if err := New(Cfg{Workers: 0}).Run(); err == nil {
+	if err := (Cfg{Workers: 0}).Run(); err == nil {
 		t.Error("Run() error = nil, want a validation error")
 	}
 
-	if err := New(Cfg{Workers: 1, Timeout: -time.Second}).Run(); err == nil {
+	if err := (Cfg{Workers: 1, Timeout: -time.Second}).Run(); err == nil {
 		t.Error("Run() error = nil, want a validation error")
 	}
 }
@@ -563,16 +549,16 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The counter Run gives a worker: one slot, written by this worker
-			// and read by nobody until it has returned, which is what makes
-			// reading it below safe without another Load ordering it.
+			// The counter Run gives its workers, here with one writer and no
+			// reader until it has returned, which is what makes reading it
+			// below safe without another Load ordering it.
 			var hashes atomic.Uint64
 
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
 
-				New(Cfg{Workers: 1}).stressTestCPU(tt.ctx(t), &hashes)
+				Cfg{Workers: 1}.stressTestCPU(tt.ctx(t), &hashes)
 			}()
 
 			select {
@@ -609,7 +595,7 @@ func TestStressTestCPUPublishesAsItGoes(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		New(Cfg{Workers: 1}).stressTestCPU(ctx, &hashes)
+		Cfg{Workers: 1}.stressTestCPU(ctx, &hashes)
 	}()
 
 	// Polled rather than slept on: what this asserts is that the count moves
@@ -645,7 +631,7 @@ func TestRunStopsAtTimeout(t *testing.T) {
 
 	start := time.Now()
 	done := make(chan error, 1)
-	go func() { done <- New(Cfg{Workers: 2, Timeout: timeout}).Run() }()
+	go func() { done <- Cfg{Workers: 2, Timeout: timeout}.Run() }()
 
 	select {
 	case err := <-done:
@@ -670,7 +656,7 @@ func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 	const timeout = 10 * time.Millisecond
 
 	out := captureStdout(t, func() {
-		if err := New(Cfg{Workers: 1, Timeout: timeout}).Run(); err != nil {
+		if err := (Cfg{Workers: 1, Timeout: timeout}).Run(); err != nil {
 			t.Errorf("Run() error = %v, want nil", err)
 		}
 	})
@@ -716,7 +702,7 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	)
 
 	out := captureStdout(t, func() {
-		if err := New(Cfg{Workers: 1, Timeout: timeout, Report: report}).Run(); err != nil {
+		if err := (Cfg{Workers: 1, Timeout: timeout, Report: report}).Run(); err != nil {
 			t.Errorf("Run() error = %v, want nil", err)
 		}
 	})
@@ -764,15 +750,15 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	}
 }
 
-// TestRunIsReusable covers the third item of #14: Run closed a channel created
-// in New, so a second call panicked immediately on the already-closed channel.
-// The context replacing it is built per call.
+// TestRunIsReusable covers the third item of #14: Run closed a channel held by
+// the configuration, so a second call panicked immediately on the already-closed
+// channel. The context replacing it is built per call.
 func TestRunIsReusable(t *testing.T) {
-	s := New(Cfg{Workers: 1, Timeout: time.Millisecond})
+	cfg := Cfg{Workers: 1, Timeout: time.Millisecond}
 
 	for i := range 2 {
 		done := make(chan error, 1)
-		go func() { done <- s.Run() }()
+		go func() { done <- cfg.Run() }()
 
 		select {
 		case err := <-done:

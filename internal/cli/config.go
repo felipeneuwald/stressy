@@ -7,6 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
 // bindEnv resolves each flag not given on the command line from the environment:
@@ -79,4 +81,24 @@ func envName(prefix, flagName string) string {
 	}
 
 	return strings.ToUpper(prefix) + "_" + name
+}
+
+// validateRanges rejects a value that parsed but is out of range, naming the
+// environment variable it arrived through when it did. This is the last point at
+// which that source is known — by the time Run holds the value, `-w 0`,
+// STRESSY_WORKERS=0 and the default are one int — and internal/stressy re-applies
+// the same rules there, in Cfg.Validate, for callers that do not come through
+// this command.
+func validateRanges(cfg *stressy.Cfg, fromEnv map[string]string) error {
+	setting, err := cfg.Validate()
+	if err == nil {
+		return nil
+	}
+
+	// Deliberately the shape bindEnv gives a value it could not parse.
+	if name, ok := fromEnv[setting]; ok {
+		return fmt.Errorf("invalid %v: %w", name, err)
+	}
+
+	return err
 }

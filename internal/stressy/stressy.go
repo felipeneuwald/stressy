@@ -59,27 +59,11 @@ func (e *SignalError) ExitCode() int {
 	return 128 + int(sig)
 }
 
-// Stressy is a configured CPU stress test, ready to Run.
-type Stressy struct {
-	workers int           // number of parallel worker goroutines
-	timeout time.Duration // how long to run (0 for indefinite)
-	report  time.Duration // how often to print a progress line (0 for never)
-}
-
-// Cfg is the configuration New builds a Stressy from.
+// Cfg is a configured CPU stress test, ready to Run.
 type Cfg struct {
 	Workers int           // number of parallel worker goroutines
 	Timeout time.Duration // how long to run (0 for indefinite)
 	Report  time.Duration // how often to print a progress line (0 for never)
-}
-
-// New returns a Stressy configured by c.
-func New(c Cfg) *Stressy {
-	return &Stressy{
-		workers: c.Workers,
-		timeout: c.Timeout,
-		report:  c.Report,
-	}
 }
 
 // Run starts the configured workers and blocks until the timeout expires or a
@@ -89,8 +73,8 @@ func New(c Cfg) *Stressy {
 //
 // It returns an error if the configuration is invalid, a *SignalError — not a
 // failure, an exit code — if a signal ended the run, and nil if the timer did.
-func (s *Stressy) Run() error {
-	if err := s.validateConfig(); err != nil {
+func (c Cfg) Run() error {
+	if _, err := c.Validate(); err != nil {
 		return err
 	}
 
@@ -104,9 +88,9 @@ func (s *Stressy) Run() error {
 	signal.Notify(received, shutdownSignals...)
 	defer signal.Stop(received)
 
-	fmt.Println(s.startupMessage())
+	fmt.Println(c.startupMessage())
 
-	if hint := s.hintMessage(); hint != "" {
+	if hint := c.hintMessage(); hint != "" {
 		fmt.Println(hint)
 	}
 
@@ -117,28 +101,27 @@ func (s *Stressy) Run() error {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 
-	if s.timeout > 0 {
+	if c.Timeout > 0 {
 		var expire context.CancelFunc
-		ctx, expire = context.WithTimeout(ctx, s.timeout)
+		ctx, expire = context.WithTimeout(ctx, c.Timeout)
 		defer expire()
 	}
 
 	var wg sync.WaitGroup
 
-	// One slot per worker, each with exactly one writer, so publishing a count is
-	// a store of the worker's own local rather than a read-modify-write. Atomic
-	// because the --report heartbeat reads them mid-run, while workers still hash.
-	hashes := make([]atomic.Uint64, s.workers)
+	// Atomic because the --report heartbeat reads it mid-run, while every worker
+	// is still adding to it.
+	var hashes atomic.Uint64
 
-	wg.Add(s.workers)
-	for i := range s.workers {
+	wg.Add(c.Workers)
+	for range c.Workers {
 		go func() {
 			defer wg.Done()
-			s.stressTestCPU(ctx, &hashes[i])
+			c.stressTestCPU(ctx, &hashes)
 		}()
 	}
 
-	sig := s.waitForShutdown(ctx, received, hashes, start)
+	sig := c.waitForShutdown(ctx, received, &hashes, start)
 
 	fmt.Println(shutdownMessage(sig))
 
@@ -148,7 +131,7 @@ func (s *Stressy) Run() error {
 
 	wg.Wait()
 
-	fmt.Println(s.summaryMessage(totalHashes(hashes), time.Since(start)))
+	fmt.Println(c.summaryMessage(hashes.Load(), time.Since(start)))
 
 	if sig != nil {
 		return &SignalError{Signal: sig}
@@ -161,13 +144,13 @@ func (s *Stressy) Run() error {
 // report interval while it waits. It returns the signal that ended the run, or
 // nil where the deadline expired — the distinction Run's shutdown line and the
 // process exit code are both chosen from.
-func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal, hashes []atomic.Uint64, start time.Time) os.Signal {
+func (c Cfg) waitForShutdown(ctx context.Context, received <-chan os.Signal, hashes *atomic.Uint64, start time.Time) os.Signal {
 	// nil where --report is off, and a receive from a nil channel blocks forever,
 	// so the default run waits on exactly the two channels it always did.
 	var tick <-chan time.Time
 
-	if s.report > 0 {
-		ticker := time.NewTicker(s.report)
+	if c.Report > 0 {
+		ticker := time.NewTicker(c.Report)
 		defer ticker.Stop()
 
 		tick = ticker.C
@@ -186,43 +169,29 @@ func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal
 			// carries the time it fired, printing the elapsed time the line would
 			// have had if the process were healthy — hiding exactly the pathology
 			// an operator turns this on to see.
-			fmt.Println(progressMessage(totalHashes(hashes), time.Since(start)))
+			fmt.Println(progressMessage(hashes.Load(), time.Since(start)))
 		}
 	}
-}
-
-// totalHashes adds up the per-worker slots, for the heartbeat mid-run and the
-// summary once every worker has drained. Indexed rather than ranged over by
-// value, because an atomic.Uint64 must not be copied — `for _, n := range
-// hashes` compiles, and go vet's copylocks analyser is what stops it.
-func totalHashes(hashes []atomic.Uint64) uint64 {
-	var total uint64
-
-	for i := range hashes {
-		total += hashes[i].Load()
-	}
-
-	return total
 }
 
 // startupMessage is the line Run prints before the workers start: how many
 // workers, and for how long. Built as a string rather than printed in place,
 // like the four message functions below, so it is testable without os.Stdout.
-func (s *Stressy) startupMessage() string {
+func (c Cfg) startupMessage() string {
 	// The timeout is a time.Duration and formats itself: "30s", "5m0s".
 	duration := "indefinitely"
-	if s.timeout > 0 {
-		duration = "for " + s.timeout.String()
+	if c.Timeout > 0 {
+		duration = "for " + c.Timeout.String()
 	}
 
-	return fmt.Sprintf("Starting CPU stress test with %d %s %s", s.workers, plural(s.workers, "worker", "workers"), duration)
+	return fmt.Sprintf("Starting CPU stress test with %d %s %s", c.Workers, plural(c.Workers, "worker", "workers"), duration)
 }
 
 // hintMessage is the second line Run prints, and only on an indefinite run —
 // the one that has to say how to stop it. SIGTERM is named beside Ctrl-C
 // because that is what a `docker stop` or a node drain sends.
-func (s *Stressy) hintMessage() string {
-	if s.timeout > 0 {
+func (c Cfg) hintMessage() string {
+	if c.Timeout > 0 {
 		return ""
 	}
 
@@ -256,7 +225,7 @@ func shutdownMessage(sig os.Signal) string {
 // run did, where the line above it says only why it stopped. The elapsed time is
 // measured rather than the configured timeout echoed back, because a run ends up
 // to one hash past its deadline and the rate divides by the time that passed.
-func (s *Stressy) summaryMessage(hashes uint64, elapsed time.Duration) string {
+func (c Cfg) summaryMessage(hashes uint64, elapsed time.Duration) string {
 	return fmt.Sprintf(
 		"Computed %d %s in %s (%.1f hashes/s, %d %s)",
 		hashes, plural(hashes, "hash", "hashes"),
@@ -264,7 +233,7 @@ func (s *Stressy) summaryMessage(hashes uint64, elapsed time.Duration) string {
 		// costs two hundred of them.
 		elapsed.Round(time.Millisecond),
 		hashRate(hashes, elapsed),
-		s.workers, plural(s.workers, "worker", "workers"),
+		c.Workers, plural(c.Workers, "worker", "workers"),
 	)
 }
 
@@ -287,62 +256,37 @@ func plural[T int | uint64](n T, one, many string) string {
 	return many
 }
 
-// ValidateWorkers reports whether workers is a count a run can be started with.
-// Exported, like the other validators here, because the command layer checks it
-// before the run — where it still knows whether the value came from `-w` or from
-// STRESSY_WORKERS and can name the one that produced it. This package cannot.
-func ValidateWorkers(workers int) error {
-	if workers < 1 {
-		return fmt.Errorf("workers must be 1 or greater")
+// Validate reports whether a run can be started with this configuration, and
+// names the setting that failed alongside the error. Timeout 0 is indefinite and
+// Report 0 is off; neither has an upper bound, because any interval is one the
+// operator asked for.
+//
+// The setting name is what the command layer needs and this package cannot
+// recover: by the time Run holds a value, `-w 0`, STRESSY_WORKERS=0 and the
+// default are one int, so naming the variable that produced it has to happen
+// out there. Exported for that caller; Run applies the same rules for every
+// other one.
+func (c Cfg) Validate() (setting string, err error) {
+	switch {
+	case c.Workers < 1:
+		return "workers", fmt.Errorf("workers must be 1 or greater")
+	case c.Timeout < 0:
+		return "timeout", fmt.Errorf("timeout must be 0 (indefinite) or greater")
+	case c.Report < 0:
+		return "report", fmt.Errorf("report must be 0 (off) or greater")
 	}
 
-	return nil
-}
-
-// ValidateTimeout reports whether timeout can start a run; 0 means indefinite.
-func ValidateTimeout(timeout time.Duration) error {
-	if timeout < 0 {
-		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
-	}
-
-	return nil
-}
-
-// ValidateReport reports whether report can start a run; 0, the default, means
-// off. No upper bound on purpose: any interval is one the operator asked for.
-func ValidateReport(report time.Duration) error {
-	if report < 0 {
-		return fmt.Errorf("report must be 0 (off) or greater")
-	}
-
-	return nil
-}
-
-// validateConfig applies the three rules above before a single worker starts.
-// The command checks the same settings first, so this is the backstop for every
-// other caller of Run.
-func (s *Stressy) validateConfig() error {
-	if err := ValidateWorkers(s.workers); err != nil {
-		return err
-	}
-
-	if err := ValidateTimeout(s.timeout); err != nil {
-		return err
-	}
-
-	return ValidateReport(s.report)
+	return "", nil
 }
 
 // stressTestCPU computes bcrypt hashes at hashCost until ctx is cancelled,
-// publishing its running count into hashes as it goes. That is where the whole
-// of the load lives: bcrypt salts every call itself, so nothing outside the hash
-// has to vary for the work to be real, and a worker returns within one hash of
-// ctx being done.
-func (s *Stressy) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
+// counting each into hashes as it goes. That is where the whole of the load
+// lives: bcrypt salts every call itself, so nothing outside the hash has to vary
+// for the work to be real, and a worker returns within one hash of ctx being
+// done.
+func (c Cfg) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 	// Hoisted; a constant also stays well inside bcrypt's 72-byte limit.
 	password := []byte("stressy")
-
-	var computed uint64
 
 	for {
 		select {
@@ -356,8 +300,7 @@ func (s *Stressy) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 				panic(err)
 			}
 
-			computed++
-			hashes.Store(computed)
+			hashes.Add(1)
 		}
 	}
 }

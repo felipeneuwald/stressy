@@ -74,7 +74,7 @@ type Cfg struct {
 // It returns an error if the configuration is invalid, a *SignalError — not a
 // failure, an exit code — if a signal ended the run, and nil if the timer did.
 func (c Cfg) Run() error {
-	if err := c.validateConfig(); err != nil {
+	if _, err := c.Validate(); err != nil {
 		return err
 	}
 
@@ -256,50 +256,27 @@ func plural[T int | uint64](n T, one, many string) string {
 	return many
 }
 
-// ValidateWorkers reports whether workers is a count a run can be started with.
-// Exported, like the other validators here, because the command layer checks it
-// before the run — where it still knows whether the value came from `-w` or from
-// STRESSY_WORKERS and can name the one that produced it. This package cannot.
-func ValidateWorkers(workers int) error {
-	if workers < 1 {
-		return fmt.Errorf("workers must be 1 or greater")
+// Validate reports whether a run can be started with this configuration, and
+// names the setting that failed alongside the error. Timeout 0 is indefinite and
+// Report 0 is off; neither has an upper bound, because any interval is one the
+// operator asked for.
+//
+// The setting name is what the command layer needs and this package cannot
+// recover: by the time Run holds a value, `-w 0`, STRESSY_WORKERS=0 and the
+// default are one int, so naming the variable that produced it has to happen
+// out there. Exported for that caller; Run applies the same rules for every
+// other one.
+func (c Cfg) Validate() (setting string, err error) {
+	switch {
+	case c.Workers < 1:
+		return "workers", fmt.Errorf("workers must be 1 or greater")
+	case c.Timeout < 0:
+		return "timeout", fmt.Errorf("timeout must be 0 (indefinite) or greater")
+	case c.Report < 0:
+		return "report", fmt.Errorf("report must be 0 (off) or greater")
 	}
 
-	return nil
-}
-
-// ValidateTimeout reports whether timeout can start a run; 0 means indefinite.
-func ValidateTimeout(timeout time.Duration) error {
-	if timeout < 0 {
-		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
-	}
-
-	return nil
-}
-
-// ValidateReport reports whether report can start a run; 0, the default, means
-// off. No upper bound on purpose: any interval is one the operator asked for.
-func ValidateReport(report time.Duration) error {
-	if report < 0 {
-		return fmt.Errorf("report must be 0 (off) or greater")
-	}
-
-	return nil
-}
-
-// validateConfig applies the three rules above before a single worker starts.
-// The command checks the same settings first, so this is the backstop for every
-// other caller of Run.
-func (c Cfg) validateConfig() error {
-	if err := ValidateWorkers(c.Workers); err != nil {
-		return err
-	}
-
-	if err := ValidateTimeout(c.Timeout); err != nil {
-		return err
-	}
-
-	return ValidateReport(c.Report)
+	return "", nil
 }
 
 // stressTestCPU computes bcrypt hashes at hashCost until ctx is cancelled,

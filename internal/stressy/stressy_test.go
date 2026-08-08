@@ -27,7 +27,7 @@ const stopBudget = 30 * time.Second
 // reason: the README quotes this line back to the reader.
 var progressLine = regexp.MustCompile(`^\S+ elapsed, (\d+) hash(?:es)?, \d+\.\d+ hashes/s$`)
 
-func TestValidateConfig(t *testing.T) {
+func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     Cfg
@@ -54,20 +54,20 @@ func TestValidateConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.cfg.validateConfig()
+			_, err := tt.cfg.Validate()
 
 			if tt.wantErr == "" {
 				if err != nil {
-					t.Fatalf("validateConfig() error = %v, want nil", err)
+					t.Fatalf("Validate() error = %v, want nil", err)
 				}
 				return
 			}
 
 			if err == nil {
-				t.Fatalf("validateConfig() error = nil, want %q", tt.wantErr)
+				t.Fatalf("Validate() error = nil, want %q", tt.wantErr)
 			}
 			if err.Error() != tt.wantErr {
-				t.Errorf("validateConfig() error = %q, want %q", err, tt.wantErr)
+				t.Errorf("Validate() error = %q, want %q", err, tt.wantErr)
 			}
 		})
 	}

@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ func bindEnv(cmd *cobra.Command, prefix string) (map[string]string, error) {
 
 		// cobra acts on --help and --version while parsing flags, before this
 		// runs, so an environment value for either could only ever fail the run.
-		if setByCobra(f) {
+		if SetByCobra(f) {
 			return
 		}
 
@@ -55,12 +55,18 @@ func bindEnv(cmd *cobra.Command, prefix string) (map[string]string, error) {
 	return fromEnv, err
 }
 
-// setByCobra reports whether cobra registered this flag itself rather than
-// newCmd declaring it, by reading cobra's own annotation rather than a list of
+// SetByCobra reports whether cobra registered this flag itself rather than
+// NewCmd declaring it, by reading cobra's own annotation rather than a list of
 // names kept here. TestCobraAnnotatesItsOwnFlags pins that annotation against
 // the cobra in go.mod, because a bump dropping it would be silent.
-func setByCobra(f *pflag.Flag) bool {
+func SetByCobra(f *pflag.Flag) bool {
 	return len(f.Annotations[cobra.FlagSetByCobraAnnotation]) > 0
+}
+
+// EnvName is the variable a flag of this name is filled from, with stressy's
+// own prefix baked in — which is what a caller outside this package wants.
+func EnvName(flagName string) string {
+	return envName(envPrefix, flagName)
 }
 
 // envName is the prefix, an underscore, and the flag name upper-cased with

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"slices"
@@ -10,8 +11,10 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/felipeneuwald/stressy/internal/cli"
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
@@ -152,14 +155,14 @@ func TestDocumentedExitCodes(t *testing.T) {
 // TestPrecedenceIsDocumentedWhereUsersRead is #47's live guard on `--help`.
 func TestPrecedenceIsDocumentedWhereUsersRead(t *testing.T) {
 	// bindEnv's skip is keyed on the annotation Execute puts on these two.
-	cmd := newCmd(&stressy.Cfg{})
+	cmd := cli.NewCmd(&stressy.Cfg{})
 	cmd.InitDefaultHelpFlag()
 	cmd.InitDefaultVersionFlag()
 	long := collapse(cmd.Long)
 
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		variable := envName(envPrefix, f.Name)
-		if setByCobra(f) {
+		variable := cli.EnvName(f.Name)
+		if cli.SetByCobra(f) {
 			// Offering a variable the binding refuses to read reads as an
 			// invitation to set it, which is worse than documenting nothing.
 			if strings.Contains(long, variable) {
@@ -230,6 +233,43 @@ func (inv invocation) run(t *testing.T) stressy.Cfg {
 	}
 
 	return cfg
+}
+
+// newTestCmd builds the real command over cfg with the stress test stubbed out:
+// the actual RunE saturates the CPU and blocks until signalled, where these
+// cases are about what a documented command line parses to. Flag registration
+// and the environment binding in PreRunE are the ones the binary runs.
+//
+// Every variable a run can be configured from is blanked first, so a case reads
+// the invocation in front of it rather than the one the shell running `go test`
+// happens to export (#58). The names come off the command's own flags, so a
+// fourth flag is covered the day it is registered; blank rather than unset,
+// because bindEnv treats an empty value as unset deliberately and t.Setenv
+// restores what was there afterwards. A documented value therefore has to be
+// applied after this returns — the environment is read at Execute time, so that
+// ordering costs nothing.
+func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
+	t.Helper()
+
+	c := cli.NewCmd(cfg)
+
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		if !cli.SetByCobra(f) {
+			t.Setenv(cli.EnvName(f.Name), "")
+		}
+	})
+
+	c.RunE = func(*cobra.Command, []string) error { return nil }
+
+	// Output goes nowhere: these cases read the error Execute returns, and a
+	// failing one would otherwise print its message and, for a usage error, the
+	// whole help screen into the test output.
+	c.SilenceErrors = true
+
+	c.SetOut(io.Discard)
+	c.SetErr(io.Discard)
+
+	return c
 }
 
 // documentedInvocations gathers every stressy run the project publishes.
@@ -303,7 +343,7 @@ func fileInvocations(t *testing.T, path string) []invocation {
 // exampleInvocations reads the Example block `stressy --help` prints (#27c).
 func exampleInvocations(t *testing.T) []invocation {
 	t.Helper()
-	example := newCmd(&stressy.Cfg{}).Example
+	example := cli.NewCmd(&stressy.Cfg{}).Example
 	if strings.TrimSpace(example) == "" {
 		t.Fatal("the root command has no Example block, so `stressy --help` shows no examples (#27c)")
 	}
@@ -419,7 +459,7 @@ func flowList(t *testing.T, source, list string) []string {
 // documentedImages returns every image reference the README or `--help` names.
 func documentedImages(t *testing.T) []string {
 	t.Helper()
-	doc := strings.Join(lines(t, readmePath), "\n") + "\n" + newCmd(&stressy.Cfg{}).Example
+	doc := strings.Join(lines(t, readmePath), "\n") + "\n" + cli.NewCmd(&stressy.Cfg{}).Example
 	found := imageRef.FindAllString(doc, -1)
 	if found == nil {
 		t.Fatalf("%s names no %s image, so there is nothing to check against %s", readmePath, imageRepo, releaseConfigPath)

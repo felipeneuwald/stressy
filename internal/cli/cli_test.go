@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -30,13 +30,13 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 
 	clearStressyEnv(t)
 
-	c := newCmd(cfg)
+	c := NewCmd(cfg)
 	c.RunE = func(*cobra.Command, []string) error { return nil }
 
 	// Output goes nowhere: these cases read the error Execute returns, and a
 	// failing one would otherwise print its message and, for a usage error,
 	// the whole help screen into the test output. SilenceUsage is deliberately
-	// left as newCmd sets it, since TestUsageIsSilencedOnlyForRuntimeErrors
+	// left as NewCmd sets it, since TestUsageIsSilencedOnlyForRuntimeErrors
 	// asserts on exactly that.
 	c.SilenceErrors = true
 
@@ -70,7 +70,7 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 func clearStressyEnv(t *testing.T) {
 	t.Helper()
 
-	newCmd(&stressy.Cfg{}).Flags().VisitAll(func(f *pflag.Flag) {
+	NewCmd(&stressy.Cfg{}).Flags().VisitAll(func(f *pflag.Flag) {
 		t.Setenv(envName(envPrefix, f.Name), "")
 	})
 }
@@ -104,7 +104,7 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	clearStressyEnv(t)
 
 	var cfg stressy.Cfg
-	cmd := newCmd(&cfg)
+	cmd := NewCmd(&cfg)
 	cmd.SetArgs([]string{"-w", "1", "-t", timeout.String()})
 
 	start := time.Now()

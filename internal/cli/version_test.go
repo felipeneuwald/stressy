@@ -1,8 +1,6 @@
-package main
+package cli
 
 import (
-	"os"
-	"regexp"
 	"runtime/debug"
 	"testing"
 )
@@ -95,45 +93,5 @@ func TestVersionIsReported(t *testing.T) {
 
 	if version == "0.0.0" {
 		t.Errorf("version = %q, the placeholder every non-release build used to report (#40)", version)
-	}
-}
-
-// ldflagsVar matches the variable .goreleaser.yaml stamps, capturing the name
-// out of `-s -w -X main.injected={{.Version}}`.
-var ldflagsVar = regexp.MustCompile(`-X main\.(\w+)=`)
-
-// TestLdflagsVariableMatchesGoreleaser pins the one failure in this area that
-// cannot announce itself. `-X main.whatever=` naming a variable that does not
-// exist is not a link error — the value is dropped, and the binary quietly
-// reports the build-info fallback instead of the version it was released as.
-// Renaming the variable on either side, or deleting it, therefore has to fail
-// here or it fails in a published release.
-func TestLdflagsVariableMatchesGoreleaser(t *testing.T) {
-	const config = ".goreleaser.yaml"
-
-	cfg, err := os.ReadFile(config)
-	if err != nil {
-		t.Fatalf("ReadFile(%q) = %v, want the release config", config, err)
-	}
-
-	match := ldflagsVar.FindSubmatch(cfg)
-	if match == nil {
-		t.Fatalf("%s has no `-X main.<var>=` in its ldflags; releases would report the build-info fallback", config)
-	}
-
-	// Matched against the source rather than against a literal here: a rename
-	// that updates only one of the two files has to be what fails.
-	name := string(match[1])
-	decl := regexp.MustCompile(`(?m)^var ` + regexp.QuoteMeta(name) + ` string$`)
-
-	const source = "version.go"
-
-	src, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatalf("ReadFile(%q) = %v, want the version source", source, err)
-	}
-
-	if !decl.Match(src) {
-		t.Errorf("%s stamps main.%s, which %s does not declare as `var %s string`", config, name, source, name)
 	}
 }

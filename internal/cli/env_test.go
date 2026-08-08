@@ -7,13 +7,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// testPrefix rather than STRESSY, so that a STRESSY_* variable exported in the
-// shell running `go test` cannot reach these cases. The "nothing set" rows only
-// mean anything if the variable is genuinely absent.
+// testPrefix rather than STRESSY, so an ambient STRESSY_* cannot reach a case.
 const testPrefix = "FLAGTEST"
 
-// newCmdWithIntFlag builds a bare command carrying a single int flag, so that
-// these cases exercise bindEnv rather than stressy's own flag set.
+// newCmdWithIntFlag builds a bare command carrying a single int flag.
 func newCmdWithIntFlag(t *testing.T, name string, p *int, defaultValue int) *cobra.Command {
 	t.Helper()
 
@@ -23,17 +20,12 @@ func newCmdWithIntFlag(t *testing.T, name string, p *int, defaultValue int) *cob
 	return c
 }
 
-// newCmdWithCobraFlags builds a command carrying cobra's own --help and
-// --version beside a real flag, registered the way Execute registers them. A
-// bare cobra.Command has neither, so a case built on one cannot reach #47 at
-// all.
+// newCmdWithCobraFlags adds cobra's own --help and --version the way Execute does.
 func newCmdWithCobraFlags(t *testing.T, p *int) *cobra.Command {
 	t.Helper()
 
+	// InitDefaultVersionFlag registers nothing unless Version is set.
 	c := newCmdWithIntFlag(t, "workers", p, 1)
-
-	// InitDefaultVersionFlag registers nothing unless Version is set, which is
-	// the condition NewCmd meets by setting it on the root command.
 	c.Version = "0.0.0-test"
 	c.InitDefaultHelpFlag()
 	c.InitDefaultVersionFlag()
@@ -47,22 +39,14 @@ func TestBindEnv(t *testing.T) {
 		env         map[string]string
 		commandLine string
 		want        int
-		// wantSource is the variable bindEnv must report the flag as having
-		// been filled from, empty where it filled it from nothing. It is what
-		// #51 needs and what pflag's own Changed cannot answer: a flag set from
-		// the environment goes through the same Set as one given on the command
-		// line, so afterwards the two look identical.
+		// wantSource is what pflag's own Changed cannot answer (#51).
 		wantSource string
 	}{
 		{name: "nothing set keeps the default", want: 1},
 		{name: "environment value is applied", env: map[string]string{"FLAGTEST_WORKERS": "8"}, want: 8, wantSource: "FLAGTEST_WORKERS"},
 		{name: "command line wins over the environment", env: map[string]string{"FLAGTEST_WORKERS": "8"}, commandLine: "2", want: 2},
 		{name: "command line is kept when the environment is unset", commandLine: "2", want: 2},
-		// An empty value is what STRESSY_WORKERS=${WORKERS} expands to when
-		// WORKERS is undefined. It has always been ignored; see bindEnv.
 		{name: "empty environment value is treated as unset", env: map[string]string{"FLAGTEST_WORKERS": ""}, want: 1},
-		// The prefix is what keeps a flag from picking up an unrelated
-		// variable that happens to share its name.
 		{name: "unprefixed variable is not read", env: map[string]string{"WORKERS": "8"}, want: 1},
 	}
 
@@ -75,8 +59,6 @@ func TestBindEnv(t *testing.T) {
 			var workers int
 			c := newCmdWithIntFlag(t, "workers", &workers, 1)
 
-			// Setting through Flags() marks the flag as Changed, which is how
-			// pflag records "the user passed this on the command line".
 			if tt.commandLine != "" {
 				if err := c.Flags().Set("workers", tt.commandLine); err != nil {
 					t.Fatalf("Set() error = %v, want nil", err)
@@ -99,10 +81,7 @@ func TestBindEnv(t *testing.T) {
 	}
 }
 
-// TestBindEnvMalformedValue covers the half of #10 that lives here: a value
-// pflag cannot parse must surface as an error rather than leaving the flag at
-// its zero value, and the message has to name the variable that caused it —
-// that name is the only thing the operator can act on.
+// TestBindEnvMalformedValue: an unparseable value must error, not zero the flag.
 func TestBindEnvMalformedValue(t *testing.T) {
 	t.Setenv("FLAGTEST_WORKERS", "not-a-number")
 
@@ -118,39 +97,20 @@ func TestBindEnvMalformedValue(t *testing.T) {
 		t.Errorf("bindEnv() error = %q, want it to name the variable and the bad value", err)
 	}
 
-	// A flag pflag refused to set was not filled from anywhere, and reporting
-	// it as filled would have validateRanges attribute a later failure to a
-	// variable that never took effect.
+	// Reporting it as filled would misattribute a later failure.
 	if _, ok := fromEnv["workers"]; ok {
 		t.Errorf("bindEnv() reports workers as filled from %q, want a rejected value to be reported as no source", fromEnv["workers"])
 	}
 }
 
-// TestBindEnvIgnoresFlagsCobraSetItself covers #47. cobra registers --help and
-// --version itself and acts on both while parsing flags, before PreRunE and so
-// before bindEnv — an environment value for either can never take effect, and
-// handing one to a bool flag could only ever fail. STRESSY_VERSION=0.4.0, which
-// is a plausible way to pin an image tag in a compose file or a CI environment,
-// therefore aborted every run with a ParseBool error about a flag the operator
-// never touched.
+// TestBindEnvIgnoresFlagsCobraSetItself covers #47: cobra acts before bindEnv runs.
 func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
 	}{
-		// The half that took the run down.
-		{
-			name: "values no bool flag can parse",
-			env:  map[string]string{"FLAGTEST_HELP": "yes", "FLAGTEST_VERSION": "0.4.0", "FLAGTEST_WORKERS": "8"},
-		},
-		// And the half that parsed and was then discarded, cobra having already
-		// decided not to print help by the time bindEnv ran. Ignoring it
-		// deliberately is the same run without the pretence that it configures
-		// anything.
-		{
-			name: "values a bool flag can parse",
-			env:  map[string]string{"FLAGTEST_HELP": "true", "FLAGTEST_VERSION": "true", "FLAGTEST_WORKERS": "8"},
-		},
+		{name: "values no bool flag can parse", env: map[string]string{"FLAGTEST_HELP": "yes", "FLAGTEST_VERSION": "0.4.0", "FLAGTEST_WORKERS": "8"}},
+		{name: "values a bool flag can parse", env: map[string]string{"FLAGTEST_HELP": "true", "FLAGTEST_VERSION": "true", "FLAGTEST_WORKERS": "8"}},
 	}
 
 	for _, tt := range tests {
@@ -171,12 +131,7 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 				if source, ok := fromEnv[name]; ok {
 					t.Errorf("bindEnv() reports --%s as filled from %q, want cobra's own flags left out entirely", name, source)
 				}
-			}
 
-			// Left untouched, not merely left unreported: a bound value goes
-			// nowhere near the error return, but it is still a flag the command
-			// now carries as set by someone.
-			for _, name := range []string{"help", "version"} {
 				f := c.Flags().Lookup(name)
 				if f == nil {
 					t.Fatalf("Lookup(%q) = nil, want the flag cobra registers", name)
@@ -187,8 +142,6 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 				}
 			}
 
-			// The flag beside them still resolves. What #47 asks for is an
-			// exclusion of cobra's two, not of the environment.
 			if workers != 8 {
 				t.Errorf("workers = %d, want 8 from the environment", workers)
 			}
@@ -196,12 +149,7 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 	}
 }
 
-// TestCobraAnnotatesItsOwnFlags pins the assumption bindEnv's exclusion is keyed
-// on. cobra marks --help and --version as its own as it registers them, and
-// reads that annotation itself to tell its flags from a command's — but nothing
-// a compiler can see says the next cobra still will, and if one stopped, the
-// only symptom would be #47 returning: STRESSY_VERSION failing runs again. A
-// dependency bump that drops it has to fail here instead.
+// TestCobraAnnotatesItsOwnFlags: a cobra bump dropping it would revive #47.
 func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
 	var workers int
 	c := newCmdWithCobraFlags(t, &workers)
@@ -217,9 +165,7 @@ func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
 		}
 	}
 
-	// And the command's own flag must not carry it, or the exclusion would take
-	// every flag stressy declares with it and the environment would configure
-	// nothing at all.
+	// And stressy's own flag must not carry it, or the exclusion swallows it.
 	f := c.Flags().Lookup("workers")
 	if f == nil {
 		t.Fatal(`Lookup("workers") = nil, want the registered flag`)
@@ -230,9 +176,7 @@ func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
 	}
 }
 
-// TestBindEnvMultiWordFlagName is the case envName's dash substitution exists
-// for: a dash is not portable in an environment variable name, so --max-retries
-// has to be reachable as FLAGTEST_MAX_RETRIES or not at all.
+// TestBindEnvMultiWordFlagName is what envName's dash substitution exists for.
 func TestBindEnvMultiWordFlagName(t *testing.T) {
 	t.Setenv("FLAGTEST_MAX_RETRIES", "3")
 
@@ -248,8 +192,7 @@ func TestBindEnvMultiWordFlagName(t *testing.T) {
 		t.Errorf("max-retries = %d, want 3", retries)
 	}
 
-	// Keyed by flag name, not by variable name: validateRanges looks the source
-	// up by the flag it is checking.
+	// Keyed by flag name: validateRanges looks the source up by the setting.
 	if got := fromEnv["max-retries"]; got != "FLAGTEST_MAX_RETRIES" {
 		t.Errorf("bindEnv() filled max-retries from %q, want %q", got, "FLAGTEST_MAX_RETRIES")
 	}

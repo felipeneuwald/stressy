@@ -6,10 +6,8 @@
 // child half of each run and read the status the operating system reports, which
 // is the same thing a Kubernetes Job, a `docker run` or a shell reads.
 //
-// Kept out of the Windows build for the reason
-// internal/stressy/stressy_signal_test.go is: releases cross-compile there, and
-// signalling a process is not supported. What that costs is coverage of exit 0
-// and exit 1 on Windows, which are the two codes that did not change.
+// Kept out of the Windows build: releases cross-compile there, and signalling a
+// process is not supported.
 
 package main
 
@@ -26,13 +24,7 @@ import (
 )
 
 const (
-	// childEnv marks a re-execed test binary as the child half of
-	// TestExitCodes, and childArgsEnv carries the command line it runs stressy
-	// with: os.Args in the child is the test binary's own, so the invocation
-	// has to travel out of band. Neither is spelled STRESSY_something. bindEnv
-	// reads only STRESSY_ plus a flag name and would ignore them either way,
-	// but a variable that looks like a stressy setting and is not one is a
-	// thing to trip over rather than to explain.
+	// childEnv marks the child half; childArgsEnv carries its command line.
 	childEnv     = "GO_STRESSY_EXIT_TEST"
 	childArgsEnv = "GO_STRESSY_EXIT_TEST_ARGS"
 
@@ -43,148 +35,53 @@ const (
 	exitBudget = 60 * time.Second
 )
 
-// TestExitCodes covers #48 at the level the issue is about. Every one of these
-// codes was reachable before it except the two that matter: a run cut short by
-// SIGINT or SIGTERM exited 0, exactly like a run that served its whole `-t`, so
-// a Job whose pod was evicted five seconds into a sixty-second run was recorded
-// Complete and the `backoffLimit: 0` the README's manifest sets never saw the
-// failure it exists to bound.
-//
-// The output assertions ride along because the same runs are the only place the
-// end-of-run summary (#49) can be seen printed by a real process, on both
-// shutdown paths, in the order it has to appear in: the summary is what closes
-// the "shutting down..." ellipsis, so it comes after it.
+// TestExitCodes covers #48: a signalled run exited 0, so an evicted pod read Complete.
 func TestExitCodes(t *testing.T) {
 	tests := []struct {
 		name string
-		// args is the stressy command line, as it would be typed.
 		args string
-		// sig is sent once the child has printed its startup line, which is
-		// what proves the handler is installed. Zero means send nothing.
-		sig      syscall.Signal
-		wantCode int
-		// wantLines are prefixes that must appear on stdout, in this order.
-		wantLines []string
-		// wantNoLines are fragments that must appear nowhere on stdout. A line
-		// that stopped printing is invisible to wantLines, which is how `Use
-		// --help for additional information` came to print on every run for the
-		// life of the project with no test either asking for it or objecting
-		// (#52).
+		// sig is sent once the child has printed its startup line. Zero sends none.
+		sig         syscall.Signal
+		wantCode    int
+		wantLines   []string // prefixes that must appear, in this order
 		wantNoLines []string
-		// wantHashes requires the summary to report work actually done, which
-		// only a run long enough to finish a hash can promise.
-		wantHashes bool
-		// wantProgress requires the --report heartbeat on stdout, and its
-		// absence requires silence: every case here but one passes no
-		// --report, so leaving this unset is the assertion that a run nobody
-		// asked prints what it always has (#70).
+		wantHashes  bool
+		// wantProgress requires the heartbeat; unset requires silence (#70).
 		wantProgress bool
-		// wantStderr is a fragment cobra must have printed; empty means the run
-		// must not have reported an error at all.
-		wantStderr string
+		wantStderr   string // empty where the run must not have reported an error
 	}{
+		// Two seconds so a hash certainly finished; no help pointer (#52).
 		{
-			// Two seconds rather than something shorter so the worker is
-			// certain to have finished a hash: the count is the difference
-			// between a summary that reports the run and one that reports the
-			// scheduler.
-			name:     "a run that finishes its timeout",
-			args:     "-w 1 -t 2s",
-			wantCode: 0,
-			wantLines: []string{
-				"Starting CPU stress test with 1 worker for 2s",
-				"Timer expired, shutting down...",
-				"Computed ",
-			},
-			// A bounded run is a run whose operator has already read the flags.
-			// This is also where the line was most often read and least use:
-			// the Job log the README's Kubernetes workflow produces (#52).
+			name:        "a run that finishes its timeout",
+			args:        "-w 1 -t 2s",
+			wantLines:   []string{"Starting CPU stress test with 1 worker for 2s", "Timer expired, shutting down...", "Computed "},
 			wantNoLines: []string{helpPointer},
 			wantHashes:  true,
 		},
 		{
-			// #70 through a real process, which is the level the issue is
-			// about: what `kubectl logs` shows while a run is still happening,
-			// on an image with no shell to exec into. Two seconds at a 250ms
-			// interval leaves room for several ticks; one is what is asserted,
-			// because how many arrive is the scheduler's business and that any
-			// arrive is stressy's.
-			name:     "a run that reports its progress",
-			args:     "-w 1 -t 2s --report 250ms",
-			wantCode: 0,
-			wantLines: []string{
-				"Starting CPU stress test with 1 worker for 2s",
-				"Timer expired, shutting down...",
-				"Computed ",
-			},
+			name:         "a run that reports its progress",
+			args:         "-w 1 -t 2s --report 250ms",
+			wantLines:    []string{"Starting CPU stress test with 1 worker for 2s", "Timer expired, shutting down...", "Computed "},
 			wantHashes:   true,
 			wantProgress: true,
 		},
 		{
-			// The other half of #52, and the only place it can be seen printed
-			// by a real process: a run with no `-t` says how to stop it, where
-			// it used to announce "indefinitely" and leave the reader to guess.
-			// Ended by the signal it names, which is what makes the line's
-			// claim testable rather than decorative.
-			name:     "an indefinite run says how to stop it",
-			args:     "-w 1",
-			sig:      syscall.SIGTERM,
-			wantCode: 143,
-			wantLines: []string{
-				"Starting CPU stress test with 1 worker indefinitely",
-				stopHint,
-				"Received signal, shutting down...",
-				"Computed ",
-			},
+			name:      "an indefinite run says how to stop it",
+			args:      "-w 1",
+			sig:       syscall.SIGTERM,
+			wantCode:  143,
+			wantLines: []string{"Starting CPU stress test with 1 worker indefinitely", stopHint, "Received signal, shutting down...", "Computed "},
 		},
 		{
-			// 128 + 2. What Ctrl-C at a terminal has always produced from any
-			// process that does not handle it.
-			name:     "SIGINT",
-			args:     "-w 1 -t 10m",
-			sig:      syscall.SIGINT,
-			wantCode: 130,
-			wantLines: []string{
-				"Starting CPU stress test with 1 worker for 10m0s",
-				"Received signal, shutting down...",
-				"Computed ",
-			},
+			name:      "SIGINT",
+			args:      "-w 1 -t 10m",
+			sig:       syscall.SIGINT,
+			wantCode:  130,
+			wantLines: []string{"Starting CPU stress test with 1 worker for 10m0s", "Received signal, shutting down...", "Computed "},
 		},
-		{
-			// 128 + 15. What a `docker stop`, a `kubectl delete pod`, a node
-			// drain and an eviction all send.
-			name:     "SIGTERM",
-			args:     "-w 1 -t 10m",
-			sig:      syscall.SIGTERM,
-			wantCode: 143,
-			wantLines: []string{
-				"Starting CPU stress test with 1 worker for 10m0s",
-				"Received signal, shutting down...",
-				"Computed ",
-			},
-		},
-		{
-			// Unchanged by #48, and worth pinning next to the codes that did
-			// change: a configuration stressy will not run is still a failure,
-			// not a signal, and it is still 1.
-			name:       "a configuration the command rejects",
-			args:       "-w 0",
-			wantCode:   1,
-			wantStderr: "workers must be 1 or greater",
-		},
-		{
-			// The other way to exit 1, and the one reached by mistyping rather
-			// than by misconfiguring: cobra rejects an unknown flag while
-			// parsing, before PreRunE, where `-w 0` is rejected after it. Both
-			// exit 1, which is the point of pinning them together — the split
-			// #17a made is in what gets printed alongside, not in the status,
-			// and a supervisor reading only the code sees one failure class
-			// (#53).
-			name:       "a flag the command does not have",
-			args:       "--bogus",
-			wantCode:   1,
-			wantStderr: "unknown flag: --bogus",
-		},
+		// Unchanged by #48: `-w 0` fails after PreRunE, `--bogus` before it.
+		{name: "a configuration the command rejects", args: "-w 0", wantCode: 1, wantStderr: "workers must be 1 or greater"},
+		{name: "a flag the command does not have", args: "--bogus", wantCode: 1, wantStderr: "unknown flag: --bogus"},
 	}
 
 	for _, tt := range tests {
@@ -207,10 +104,7 @@ func TestExitCodes(t *testing.T) {
 			}
 
 			if tt.wantStderr == "" {
-				// The other half of not double-reporting the shutdown: Run has
-				// already said "Received signal, shutting down...", so cobra
-				// printing `Error: run interrupted by interrupt` under it would
-				// report one shutdown twice, the second time as a failure.
+				// Run printed the shutdown line; cobra would report it twice.
 				if strings.Contains(stderr, "Error:") {
 					t.Errorf("`stressy %s` printed %q on stderr, want the shutdown reported once (#48)", tt.args, stderr)
 				}
@@ -224,36 +118,25 @@ func TestExitCodes(t *testing.T) {
 	}
 }
 
-// TestExitCodesChild is not a test of its own. It is the process TestExitCodes
-// re-execs: with the marker set it runs the real main(), so the child exits the
-// way stressy exits and the status the parent reads is the one an operator gets.
-// Every ordinary `go test` run finds no marker and does nothing.
+// TestExitCodesChild is the process TestExitCodes re-execs; otherwise it skips.
 func TestExitCodesChild(t *testing.T) {
 	if os.Getenv(childEnv) != "1" {
 		t.Skip("the child half of TestExitCodes; runs only when re-execed")
 	}
 
-	// Rewritten rather than handed to the command directly: cobra reads os.Args
-	// itself when nothing overrides it, and os.Args here is the test binary's
-	// own command line. Going through it keeps the child on the same path a
-	// real invocation takes, flag parsing included, and the testing package has
-	// finished with os.Args long before any test runs.
+	// Rewritten rather than passed, so the child parses flags as a real run does.
 	os.Args = append(os.Args[:1], strings.Fields(os.Getenv(childArgsEnv))...)
 
 	main()
 }
 
-// runChild runs `stressy args` in a re-execed copy of this test binary,
-// optionally signalling it once it is running, and returns the exit status it
-// reported along with everything it printed.
+// runChild runs `stressy args` in a re-execed copy of this binary, optionally signalling it.
 func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout []string, stderr string) {
 	t.Helper()
 
 	child := exec.Command(os.Args[0], "-test.run=^TestExitCodesChild$")
 
-	// The ambient environment configures a run too, so a developer with
-	// STRESSY_TIMEOUT exported would otherwise be testing something other than
-	// the command line under test. Same care as docs_test.go takes.
+	// A developer with STRESSY_TIMEOUT exported would be testing something else.
 	for _, assignment := range os.Environ() {
 		if !strings.HasPrefix(assignment, "STRESSY_") {
 			child.Env = append(child.Env, assignment)
@@ -274,8 +157,7 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 	}
 	t.Cleanup(func() { _ = child.Process.Kill() })
 
-	// Read to EOF in the background: the parent has to be past the startup line
-	// before it signals, and past EOF before it waits.
+	// Read to EOF in the background: past the startup line before signalling.
 	var (
 		lines   []string
 		scanErr error
@@ -294,7 +176,6 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 
 			if !started && strings.HasPrefix(line, "Starting CPU stress test") {
 				started = true
-
 				close(running)
 			}
 		}
@@ -306,18 +187,13 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 		select {
 		case <-running:
 		case <-drained:
-			// The child exited before it ever started a run; the exit code
-			// below is the finding, so let it be reported rather than timing
-			// out here.
+			// The child exited before starting; the exit code is the finding.
 		case <-time.After(exitBudget):
 			t.Fatalf("child printed no startup line within %s", exitBudget)
 		}
 
-		// One signal is enough because the handler is registered before that
-		// line is printed. Sent any earlier, the default disposition would kill
-		// the child outright and the status would be "killed by SIGTERM"
-		// rather than the code stressy chose — which is what the check on
-		// WaitStatus.Signaled below tells apart.
+		// One signal is enough: the handler precedes that line, and the
+		// WaitStatus.Signaled check below tells a kill from an exit.
 		if err := child.Process.Signal(sig); err != nil {
 			t.Fatalf("Signal(%v) error = %v", sig, err)
 		}
@@ -349,9 +225,7 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 	return code, lines, errOut.String()
 }
 
-// checkSummary holds the line a real run prints to the shape docs_test.go
-// checks the README's sample session against, so the documented output and the
-// printed one cannot drift apart (#49).
+// checkSummary holds the line to the shape docs_test.go documents (#49).
 func checkSummary(t *testing.T, args string, stdout []string, wantHashes bool) {
 	t.Helper()
 
@@ -384,17 +258,7 @@ func checkSummary(t *testing.T, args string, stdout []string, wantHashes bool) {
 	}
 }
 
-// checkProgress holds the --report heartbeat to the shape docs_test.go checks
-// the README's sample against, and to the place in the output it has to appear:
-// between the startup line and the shutdown line, which is the gap #70 is named
-// after. A line printed after the run had stopped would tell an operator
-// watching the log nothing the summary does not.
-//
-// The negative case is the one worth having here rather than only in the engine
-// package. Every other run in this table passes no --report, so this is what
-// says a real process — the binary an operator actually deploys, not a Run call
-// inside a test — prints the three lines it has always printed unless somebody
-// asks for more.
+// checkProgress holds the heartbeat to its shape and to #70's gap.
 func checkProgress(t *testing.T, args string, stdout []string, want bool) {
 	t.Helper()
 
@@ -433,10 +297,7 @@ func checkProgress(t *testing.T, args string, stdout []string, want bool) {
 	}
 }
 
-// containsInOrder reports whether every prefix in want matches a line, in the
-// order given. Prefixes rather than whole lines because the summary carries
-// measured numbers, and order because the summary is the confirmation the
-// "shutting down..." ellipsis promises and has to follow it.
+// containsInOrder reports whether every prefix in want matches a line, in order.
 func containsInOrder(lines, want []string) bool {
 	next := 0
 	for _, line := range lines {

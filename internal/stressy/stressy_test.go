@@ -563,9 +563,9 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The counter Run gives a worker: one slot, written by this worker
-			// and read by nobody until it has returned, which is what makes
-			// reading it below safe without another Load ordering it.
+			// The counter Run gives its workers, here with one writer and no
+			// reader until it has returned, which is what makes reading it
+			// below safe without another Load ordering it.
 			var hashes atomic.Uint64
 
 			done := make(chan struct{})

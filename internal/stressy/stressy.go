@@ -125,20 +125,19 @@ func (s *Stressy) Run() error {
 
 	var wg sync.WaitGroup
 
-	// One slot per worker, each with exactly one writer, so publishing a count is
-	// a store of the worker's own local rather than a read-modify-write. Atomic
-	// because the --report heartbeat reads them mid-run, while workers still hash.
-	hashes := make([]atomic.Uint64, s.workers)
+	// Atomic because the --report heartbeat reads it mid-run, while every worker
+	// is still adding to it.
+	var hashes atomic.Uint64
 
 	wg.Add(s.workers)
-	for i := range s.workers {
+	for range s.workers {
 		go func() {
 			defer wg.Done()
-			s.stressTestCPU(ctx, &hashes[i])
+			s.stressTestCPU(ctx, &hashes)
 		}()
 	}
 
-	sig := s.waitForShutdown(ctx, received, hashes, start)
+	sig := s.waitForShutdown(ctx, received, &hashes, start)
 
 	fmt.Println(shutdownMessage(sig))
 
@@ -148,7 +147,7 @@ func (s *Stressy) Run() error {
 
 	wg.Wait()
 
-	fmt.Println(s.summaryMessage(totalHashes(hashes), time.Since(start)))
+	fmt.Println(s.summaryMessage(hashes.Load(), time.Since(start)))
 
 	if sig != nil {
 		return &SignalError{Signal: sig}
@@ -161,7 +160,7 @@ func (s *Stressy) Run() error {
 // report interval while it waits. It returns the signal that ended the run, or
 // nil where the deadline expired — the distinction Run's shutdown line and the
 // process exit code are both chosen from.
-func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal, hashes []atomic.Uint64, start time.Time) os.Signal {
+func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal, hashes *atomic.Uint64, start time.Time) os.Signal {
 	// nil where --report is off, and a receive from a nil channel blocks forever,
 	// so the default run waits on exactly the two channels it always did.
 	var tick <-chan time.Time
@@ -186,23 +185,9 @@ func (s *Stressy) waitForShutdown(ctx context.Context, received <-chan os.Signal
 			// carries the time it fired, printing the elapsed time the line would
 			// have had if the process were healthy — hiding exactly the pathology
 			// an operator turns this on to see.
-			fmt.Println(progressMessage(totalHashes(hashes), time.Since(start)))
+			fmt.Println(progressMessage(hashes.Load(), time.Since(start)))
 		}
 	}
-}
-
-// totalHashes adds up the per-worker slots, for the heartbeat mid-run and the
-// summary once every worker has drained. Indexed rather than ranged over by
-// value, because an atomic.Uint64 must not be copied — `for _, n := range
-// hashes` compiles, and go vet's copylocks analyser is what stops it.
-func totalHashes(hashes []atomic.Uint64) uint64 {
-	var total uint64
-
-	for i := range hashes {
-		total += hashes[i].Load()
-	}
-
-	return total
 }
 
 // startupMessage is the line Run prints before the workers start: how many
@@ -334,15 +319,13 @@ func (s *Stressy) validateConfig() error {
 }
 
 // stressTestCPU computes bcrypt hashes at hashCost until ctx is cancelled,
-// publishing its running count into hashes as it goes. That is where the whole
-// of the load lives: bcrypt salts every call itself, so nothing outside the hash
-// has to vary for the work to be real, and a worker returns within one hash of
-// ctx being done.
+// counting each into hashes as it goes. That is where the whole of the load
+// lives: bcrypt salts every call itself, so nothing outside the hash has to vary
+// for the work to be real, and a worker returns within one hash of ctx being
+// done.
 func (s *Stressy) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 	// Hoisted; a constant also stays well inside bcrypt's 72-byte limit.
 	password := []byte("stressy")
-
-	var computed uint64
 
 	for {
 		select {
@@ -356,8 +339,7 @@ func (s *Stressy) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 				panic(err)
 			}
 
-			computed++
-			hashes.Store(computed)
+			hashes.Add(1)
 		}
 	}
 }

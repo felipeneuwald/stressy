@@ -1,29 +1,13 @@
-# Dependabot keeps dependencies moving without a human having to notice a CVE
-# first. Every security release in CHANGELOG.md so far — 0.3.1, 0.3.2, 0.3.3 —
-# was retroactive: an advisory was published, and some time later someone went
-# and bumped the module by hand.
-#
-# The schedule matters as much as the diffs it produces. Each pull request runs
-# CI, and CI is where govulncheck lives now that the nightly cron is gone (#11:
-# GitHub disables scheduled workflows after 60 days of repository inactivity,
-# and it had already done so here). Weekly dependabot traffic is what keeps a
-# vulnerability scan running against a repository nobody is pushing to.
 version: 2
 
 updates:
-  # go.mod / go.sum.
-  #
-  # Indirect dependencies are in scope — dependabot updates anything written
-  # into the manifest. That block used to be where this project's exposure
-  # actually sat; dropping viper (#18) reduced it to cobra's `mousetrap`.
+  # go.mod / go.sum, indirect dependencies included.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     groups:
-      # One pull request a week for everything routine. Majors are left out of
-      # the group on purpose: a breaking bump should fail on its own rather
-      # than hold a batch of patch updates hostage behind a red build.
+      # Majors are left out on purpose: a breaking bump should fail on its own.
       go-modules:
         patterns:
           - "*"
@@ -31,40 +15,18 @@ updates:
           - minor
           - patch
 
-  # The `uses:` refs in .github/workflows/ — actions/checkout, actions/setup-go,
-  # the three docker/* setup steps, goreleaser/goreleaser-action.
-  #
-  # Dependabot bumps `uses:` refs only, never a step's inputs — the inlined go-version, the goreleaser version and the @v2.12.2 in the go run line have no updater.
+  # The `uses:` refs in .github/workflows/, and only those: a step's inputs —
+  # the inlined go-version, the goreleaser version, the @v2.12.2 — have no updater.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    # Actions are consumed by commit SHA with the release in a trailing
-    # comment (`actions/checkout@3d3c42e… # v7.0.1`, #65). Dependabot rewrites
-    # both halves and still classifies the bump by that version, so an action
-    # moving to a new major still arrives here as a major and would otherwise
-    # be its own pull request. Group all of them, majors included: each change
-    # is a one-line ref bump, and CI is what actually judges it. This entry is
-    # what keeps the pins from going stale — a SHA has no other updater.
+    # Grouped with majors included; a SHA pin has no other updater.
     groups:
       github-actions:
         patterns:
           - "*"
-    # Filtered out of release notes by the `^ci:` exclude in .goreleaser.yaml —
-    # a runner-side bump changes nothing a user installs. Do not add
-    # `include: scope`; that yields `ci(deps):`, which the anchored `^ci:`
-    # pattern no longer matches, and the filter would silently stop working.
+    # Matched by the anchored `^ci:` exclude in .goreleaser.yaml. Do not add
+    # `include: scope`: `ci(deps):` no longer matches and the filter dies.
     commit-message:
       prefix: ci
-
-  # No `docker` ecosystem entry, deliberately. The Dockerfile is `FROM scratch`
-  # (#21), so there is no base image to update and an entry here would be
-  # config that can never produce a pull request. If a shell-bearing base ever
-  # comes back, this is what needs restoring — and unlike the two above, those
-  # bumps ship to users in the ghcr.io images, so they should keep the default
-  # commit subject and stay in the release notes:
-  #
-  #   - package-ecosystem: docker
-  #     directory: /
-  #     schedule:
-  #       interval: weekly

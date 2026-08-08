@@ -1,5 +1,4 @@
-# Binary files. `go build` in the repo root writes the binary next to the
-# source it was built from, so it is named for the module: /stressy.
+# Binaries; `go build` in the repo root writes the module's name, /stressy.
 /stressy
 bin/
 *.exe
@@ -8,10 +7,8 @@ bin/
 *.so
 *.dylib
 
-# Test binary, built with go test -c
+# Test binary and coverage output
 *.test
-
-# Output of the go coverage tool
 *.out
 
 # Environment variables
@@ -21,9 +18,8 @@ bin/
 # cross-compiled binary here. Committing them to a public repo is permanent.
 dist/
 
-# Go workspace files, which are local-machine state
+# Local-machine state
 go.work
 go.work.sum
-
-# macOS
 .DS_Store
+.claude/

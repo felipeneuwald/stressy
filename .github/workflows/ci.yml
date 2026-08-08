@@ -7,8 +7,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Cancel superseded pull request runs, but never a main-branch run — that
-  # result is the record for the commit.
+  # Never cancel a main-branch run; that result is the record for the commit.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -20,14 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Every third-party action in this repository is pinned to a commit SHA,
-      # with the release it belongs to in the trailing comment — the form
-      # dependabot reads and rewrites, so the pins still get bumped weekly. A
-      # major tag is a pointer its owner can move, and the
-      # tj-actions/changed-files compromise moved every version tag of an
-      # action onto one malicious commit at once. The same refs run in
-      # goreleaser.yml, which holds contents: write and packages: write, so a
-      # moved tag there publishes trojaned binaries under this project's name.
+      # SHA-pinned with the release in the trailing comment, which is what
+      # dependabot rewrites; a version tag is a pointer its owner can move.
       # workflow_test.go fails on any external `uses:` that is not a SHA (#65).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,49 +31,30 @@ jobs:
           # `stable`, not go-version-file: go.mod — see #13.
           go-version: stable
           check-latest: true
-          # setup-go keys its cache on the hashed dependency files, so every
-          # ubuntu job that lists go.sum alone shares one key. This job pulls
-          # golangci-lint's own module graph on top of that; without a key of
-          # its own the cache is an unbreakable hit on a payload saved by a job
-          # that never fetched them, actions/cache skips the post-run save, and
-          # the whole tree is re-downloaded and recompiled on every run. Listing
-          # this workflow too separates the key and, since the pinned version
-          # below lives in this file, invalidates it on the bump that needs it.
+          # golangci-lint's module graph needs a cache key of its own, and this
+          # file in the key invalidates it on the version bump below.
           cache-dependency-path: |
             go.sum
             .github/workflows/ci.yml
 
-      # golangci-lint arrives through the module proxy and the sum.golang.org
-      # transparency log, which is what verifies it. Not a release tarball: the
-      # download this replaced was checked against a SHA-256 that had no
-      # updater (#67), and the actions that fetch one for you check nothing.
-      #
-      # Formatting first: `run` also reports unformatted files, but without a
-      # patch, so running it first would fail with nothing actionable.
+      # Through the module proxy, so sum.golang.org verifies it (#67).
+      # Formatting first, or `run` fails on it with nothing actionable.
       - name: Check formatting
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 fmt --diff
 
       - name: Lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 
-  # A release ships twelve binaries and the README advertises six operating
-  # systems, but `go test` only ever ran on Linux: the release dry run
-  # cross-compiles everything, which says the code builds, not that it runs.
-  # Signal delivery, timer behaviour and CPU detection are what a stress tool
-  # lives on, and each is where the three platforms differ (#66).
+  # `go test` only ever ran on Linux, while signal delivery, timer behaviour and
+  # CPU detection — what a stress tool lives on — differ per platform (#66).
   build:
     name: Build and test
     strategy:
-      # A failure on one runner must not cancel the other two — which platforms
-      # a regression reaches is the whole signal this matrix produces.
+      # Which platforms a regression reaches is the signal; do not cancel.
       fail-fast: false
       matrix:
-        # The three GitHub hosts a release ships binaries for; all three are
-        # free for public repositories. FreeBSD, NetBSD and OpenBSD have no
-        # hosted runner, so the release dry run's cross-compile stays their
-        # ceiling. internal/stressy/stressy_signal_test.go and the two other
-        # `//go:build unix` files stay out of the Windows build by design; the
-        # rest of the suite runs there, where none of it ran before.
+        # The three hosted runners a release ships binaries for; the BSDs have
+        # none, so the dry run's cross-compile stays their ceiling.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -94,30 +68,20 @@ jobs:
           go-version: stable
           check-latest: true
 
-      # The only thing keeping go.mod tidy. .goreleaser.yaml used to run `go mod
-      # tidy` as a before-hook, but goreleaser's dirty-tree check runs several
-      # stages earlier, so a drift did not fail the release — it silently
-      # rewrote go.mod, shipped a dependency graph nobody reviewed and stamped
-      # the binary `+dirty`. That hook is gone (#23); this check is what
-      # replaced it, and it has to stay green for a release to be trustworthy.
+      # The only thing keeping go.mod tidy since the goreleaser hook went (#23).
       - name: Check go.mod is tidy
         run: go mod tidy -diff
 
-      # setup-go restores a module cache; this re-checks the restored zips
-      # against go.sum, which download-time verification does not cover.
+      # Re-checks the restored cache against go.sum, which download-time does not.
       - name: Verify modules
         run: go mod verify
 
-      # -race is here so the first test that does exercise Run's goroutines is
-      # covered from day one. Note it would not catch #14, which is a double
-      # close, not a data race.
+      # -race from day one, though it would not have caught #14's double close.
       - name: Test
         run: go test -race ./...
 
-  # Its own job, not a step of Lint: folding it in would put the scan behind
-  # `golangci-lint run`, so a formatting nit would mean no CVE signal at all on
-  # the run that reports it. It is also the name `main`'s branch protection
-  # requires, and a required check that stops reporting blocks every merge.
+  # Its own job so a formatting nit cannot cost the CVE signal, and because
+  # `main`'s branch protection requires a check of this name.
   govulncheck:
     name: Vulnerability scan
     runs-on: ubuntu-latest
@@ -132,22 +96,13 @@ jobs:
           go-version: stable
           check-latest: true
 
-      # This is the only govulncheck in the repo: the nightly cron workflow was
-      # removed because GitHub silently disables schedules after 60 days of
-      # repository inactivity, which it had already done (#11). Note the two
-      # scans are not equivalent — this one fires on change, so it cannot catch
-      # a CVE published against a dependency while nobody is pushing. Weekly
-      # dependabot PRs (#22) are what restores that, since each one runs CI.
+      # The nightly cron is gone: GitHub disables schedules after 60 days (#11).
+      # This fires on change, so weekly dependabot PRs (#22) cover a quiet repo.
       - name: Run govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-  # The release pipeline used to be the one part of this repository CI never
-  # touched: goreleaser.yml only fires on `push: tags: ['v*']`, so a change to
-  # .goreleaser.yaml or the Dockerfile was validated for the first time at the
-  # moment it published. This job rehearses everything a release does except
-  # the publishing itself. No `paths:` filter on purpose — the case that
-  # motivated it is a dependabot bump to an action or base image, where nobody
-  # thinks to check the release path, and a filter would skip exactly those.
+  # goreleaser.yml only fires on a tag, so this is the only thing that validates
+  # .goreleaser.yaml and the Dockerfile before they publish. No `paths:` filter.
   release-dryrun:
     name: Release dry run
     runs-on: ubuntu-latest
@@ -156,10 +111,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # goreleaser derives the snapshot version from tag history
-          # (snapshot.version_template is `{{ incpatch .Version }}-next`), so a
-          # shallow clone gives it nothing to increment. goreleaser.yml uses
-          # fetch-depth: 0 for the same reason.
+          # goreleaser increments the last tag, so a shallow clone gives it
+          # nothing to work from. goreleaser.yml does the same.
           fetch-depth: 0
 
       - name: Set up Go
@@ -176,23 +129,16 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
 
-      # `check` first so a malformed config fails in about a second rather than
-      # after twelve cross-compiles. It warns about the pending dockers_v2
-      # migration and still exits 0; that migration is deferred on purpose and
-      # the warning is not something to silence here — see .goreleaser.yaml.
+      # `check` first, so a malformed config fails in a second rather than
+      # after twelve cross-compiles. Its dockers_v2 warning still exits 0.
       - name: Check release config
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           version: '~> v2'
           args: check
 
-      # --snapshot never publishes: no registry login, no image push, no GitHub
-      # release. It covers builds, archives, checksums and both image builds.
-      # It does NOT cover docker_manifests — goreleaser skips those without
-      # pushed images — nor the ghcr login/push or release creation. Those stay
-      # verifiable only by a real tag; a vX.Y.Z-rcN tag is the cheap way, since
-      # prerelease: auto and the `{{ if not .Prerelease }}` guards keep it off
-      # :latest and off GitHub "Latest".
+      # --snapshot covers builds, archives, checksums and both images, but not
+      # docker_manifests, the ghcr push or the release; an rcN tag reaches those.
       - name: Snapshot release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:

@@ -6,40 +6,25 @@ on:
       - 'v*'
 
 concurrency:
-  # Ref-less on purpose: two tags pushed close together both write the same
-  # ghcr.io :latest manifest, and whichever finishes second wins. A release
-  # must not interleave with another once the tag is public.
-  #
-  # Trade-off of cancel-in-progress: false — GitHub cancels a *pending* run
-  # when a newer one queues, so three tags inside one release window will drop
-  # the middle tag's release.
+  # Ref-less: two tags close together write the same :latest manifest. The
+  # trade-off is that GitHub drops a pending run when a newer one queues.
   group: release
   cancel-in-progress: false
 
-# Read-only by default, so the gate below runs with a token that can publish
-# nothing. The two write grants live on the one job that needs them (#68).
+# Read-only by default; the write grants live on the one job that needs them (#68).
 permissions:
   contents: read
 
 jobs:
-  # A `v*` tag used to go straight to publishing: tag a commit whose CI was
-  # red, still running, or never ran at all — a tag on a branch that was never
-  # pushed — and twelve binaries reached the release page and ghcr.io :latest
-  # moved, with nothing having judged the code. The release dry run in ci.yml
-  # exists precisely so release-path changes are validated before a tag, and
-  # CONTRIBUTING's "Releasing" steps assume a green build; this is what
-  # enforces the assumption. A repository ruleset would gate earlier, server
-  # side, but it lives in repository settings — invisible in a clone and
-  # unreviewable in a pull request. This is the in-repo version; a ruleset can
-  # be layered on top.
+  # A `v*` tag used to publish whatever it pointed at, red CI included. A
+  # repository ruleset would gate earlier but is invisible in a clone; this is
+  # the in-repo version, and a ruleset can be layered on top.
   gate:
     name: Require green CI on the tagged commit
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      # This repository's workflow runs, and nothing else. Notably not
-      # contents: this job checks out no code, so the shell it runs cannot be
-      # one the tag brought with it.
+      # Not contents: this job checks out no code, so the tag cannot supply it.
       actions: read
     steps:
       - name: Check CI conclusions for ${{ github.sha }}
@@ -48,24 +33,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ci.yml's own runs, not the commit's check runs: this gate runs on
-          # the tagged commit, so its check run is in that second list, forever
-          # in_progress, and every release would deadlock on itself.
+          # ci.yml's runs, not the commit's check runs, which include this one.
           ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
             --jq '.workflow_runs[].id')
 
-          # Load-bearing: with nothing to disagree with, every check below
-          # passes vacuously, and a tag on a branch nobody pushed publishes.
+          # Load-bearing: every check below passes vacuously on an empty list.
           [ -n "$ids" ] || { echo "::error::CI never ran for ${GITHUB_SHA}"; exit 1; }
 
-          # Every job of every run — not the run's conclusion, which is
-          # `success` when a job is skipped as well as when it passes. Reading
-          # the run alone would publish a commit whose Release dry run never
-          # executed, which is the one job branch protection does not require
-          # either. No job is named here: whatever ci.yml declares is what has
-          # to be green, so a job added later is covered without editing this,
-          # and a job that starts skipping blocks the release until someone
-          # decides that was intended.
+          # Every job, not the run conclusion, which reads `success` for a
+          # skipped job too. No job is named, so ci.yml stays the only list.
           while read -r id; do
             jobs=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/jobs?per_page=100" \
               --jq '[.jobs[] | {name, status, conclusion}]')
@@ -81,8 +57,7 @@ jobs:
 
   goreleaser:
     name: Release
-    # Nothing below this line runs until the gate passes. workflow_test.go
-    # fails if this edge disappears (#68).
+    # workflow_test.go fails if this edge disappears (#68).
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -90,9 +65,7 @@ jobs:
       contents: write # creates the release, uploads archives
       packages: write # pushes images and manifests to ghcr.io
     steps:
-      # Pinned to commit SHAs for the reason ci.yml states at its first
-      # `uses:`. These are the refs that matter most: they run with the two
-      # write grants above (#65).
+      # SHA-pinned as in ci.yml, and these refs run with the write grants (#65).
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,11 +74,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # setup-go v6+ sets GOTOOLCHAIN=local, so the installed Go must
-          # satisfy go.mod's directive by itself rather than re-execing a
-          # downloaded one — a mismatch now fails loudly instead of quietly
-          # shipping a different compiler than the logs claim, which is
-          # exactly how #13 went unnoticed.
+          # setup-go v6+ sets GOTOOLCHAIN=local, so a version mismatch fails
+          # loudly rather than shipping a compiler the logs do not name (#13).
           go-version: stable
           check-latest: true
 
@@ -132,12 +102,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Release the tag that triggered this run, not whatever goreleaser
-          # infers from the commit. Those differ whenever two tags share a
-          # commit — which is exactly what a release-candidate flow produces:
-          # tag vX.Y.Z-rc1, verify it, then tag vX.Y.Z on the same commit.
-          # goreleaser then picked the rc, tried to re-publish an already
-          # published release and failed on `already_exists` asset uploads,
-          # having skipped the real release entirely. github.ref_name is
-          # unambiguous: for a tag push it is the tag being pushed.
+          # The tag that triggered this run, not what goreleaser infers: with
+          # an rc1 and a final on one commit it picked the rc and re-published it.
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}

@@ -1,9 +1,7 @@
 version: "2"
 
-# Owns formatting as well as linting, so CI has one Go gate rather than a
-# hand-rolled `gofmt -l` step alongside it. `golangci-lint fmt --diff` must run
-# before `run`: `run` also reports "File is not properly formatted", but with no
-# patch, so it fails first and the diff never gets printed.
+# Owns formatting too, so CI has one Go gate. Run `fmt --diff` before `run`, or
+# `run` fails on formatting first and the patch never gets printed.
 
 formatters:
   enable:
@@ -22,16 +20,10 @@ linters:
     - unused
     - ineffassign
     - misspell
-    # The codebase wraps errors — `fmt.Errorf("invalid %v: %w", …)` in
-    # internal/cli/config.go, `errors.Is(ctx.Err(), context.DeadlineExceeded)` in
-    # internal/stressy — and nothing above catches the two regressions that
-    # pattern invites: a `%w` downgraded to `%v`, which compiles, prints
-    # identically and silently breaks every errors.Is caller, and a direct `==`
-    # against an error that is now wrapped. govet's printf analyser checks verb
-    # validity, not wrapping.
+    # Catches a `%w` downgraded to `%v` and a direct `==` against a wrapped
+    # error; govet's printf analyser checks verb validity, not wrapping.
     - errorlint
-    # There is no //nolint in this repository today, which is the moment to
-    # require that any future one names its linter and says why.
+    # There is no //nolint here yet; any future one must name its linter.
     - nolintlint
 
   settings:
@@ -39,15 +31,12 @@ linters:
       check-type-assertions: true
     govet:
       enable-all: true
-      # fieldalignment optimises struct padding. Stressy allocates a handful of
-      # structs for the lifetime of the process; ordering fields for the packer
-      # instead of for the reader is a bad trade here.
+      # Padding is not worth reordering fields away from reading order here.
       disable:
         - fieldalignment
 
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Without it a govet finding that shares a line with another linter's is
-  # dropped — the only reason a separate `go vet` step ever existed.
+  # Without it a govet finding sharing a line with another linter's is dropped.
   uniq-by-line: false

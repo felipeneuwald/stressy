@@ -77,7 +77,7 @@ variable, and an empty variable counts as unset.`,
 			return validateRanges(cfg, fromEnv)
 		},
 		RunE: func(c *cobra.Command, _ []string) error {
-			err := stressy.New(*cfg).Run()
+			err := cfg.Run()
 
 			// A signal-shortened run is reported by its exit code, not as an error:
 			// Run has already printed the shutdown line, and cobra would report the

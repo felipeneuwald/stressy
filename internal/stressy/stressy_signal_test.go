@@ -51,7 +51,7 @@ func TestRunStopsOnSignal(t *testing.T) {
 			defer signal.Stop(guard)
 
 			done := make(chan error, 1)
-			go func() { done <- New(Cfg{Workers: 1, Timeout: tt.timeout}).Run() }()
+			go func() { done <- Cfg{Workers: 1, Timeout: tt.timeout}.Run() }()
 
 			// Run installs its handler asynchronously, so signal until it takes.
 			deadline := time.After(stopBudget)

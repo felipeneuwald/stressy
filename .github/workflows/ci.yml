@@ -91,8 +91,9 @@ jobs:
   # second `go test` run buys a signal that stands on its own.
   #
   # Report only: nothing here compares the number to anything, so what turns
-  # this job red is a failing test, not a figure. At 98.4% a threshold would
-  # trip on ordinary changes rather than on regressions.
+  # this job red is a failing test, not a figure. A threshold would trip on
+  # ordinary changes rather than on regressions — deleting a test moves this
+  # number as far as a regression does, and this repository deletes tests.
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -112,9 +113,10 @@ jobs:
           check-latest: true
 
       # -coverpkg=./... is what makes this the merged figure rather than each
-      # package's own: docs_test.go and main_exit_test.go are `package main` and
-      # drive internal/stressy through Parse and through a re-execed main(),
-      # which without the flag counts for nothing — 91.1% against 98.4%.
+      # package's own: main_exit_test.go is `package main` and drives
+      # internal/stressy through a re-execed main(), which without the flag
+      # counts for nothing — 91.1% against 95.8%. The child's counters survive
+      # os.Exit, so nothing here needs `go build -cover` or a GOCOVERDIR.
       # CONTRIBUTING.md publishes this command line, so a change here is a
       # change there.
       - name: Measure coverage

@@ -23,10 +23,9 @@ const Description = `Stressy is a lightweight tool to perform CPU stress tests.
 
 Every setting is a flag; nothing is read from the environment.`
 
-// Examples is the block `stressy --help` prints under `Examples:`.
-// TestDocumentedInvocationsAreValid runs every line of this through the parser,
-// so an example naming a flag that no longer exists fails the build rather than
-// the reader.
+// Examples is the block `stressy --help` prints under `Examples:`. Nothing runs
+// these lines through the parser any more, so an example naming a flag that no
+// longer exists reaches the reader rather than a test.
 const Examples = `  # One worker until interrupted
   stressy
 

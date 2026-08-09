@@ -116,7 +116,7 @@ func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
 
 	hint := Cfg{Workers: 1}.hintMessage()
 
-	for _, sig := range ShutdownSignals {
+	for _, sig := range shutdownSignals {
 		want, ok := spellings[sig]
 		if !ok {
 			t.Errorf("a run stops on %v, which this test knows no wording for; add it to spellings and to hintMessage", sig)
@@ -155,7 +155,7 @@ func TestProgressMessage(t *testing.T) {
 				t.Errorf("progressMessage(%d, %s) = %q, want %q", tt.hashes, tt.elapsed, got, tt.want)
 			}
 
-			// A copy of docs_test.go's pattern, each anchored to real output.
+			// The shape as well as the text: the README shows both.
 			if !progressLine.MatchString(got) {
 				t.Errorf("progressMessage(%d, %s) = %q, which is not the shape the README documents", tt.hashes, tt.elapsed, got)
 			}

@@ -55,17 +55,16 @@ go tool cover -func=cover.out
 ```
 
 `-coverpkg=./...` is what makes that the merged figure rather than each
-package's own: `docs_test.go` and `main_exit_test.go` are `package main` and
-drive `internal/stressy` through `Parse` and through a re-execed `main()`, and
-without the flag none of that counts.
+package's own: `main_exit_test.go` is `package main` and drives
+`internal/stressy` through a re-execed `main()`, and without the flag none of
+that counts.
 
 ## Tests
 
 Test what an operator can observe: the flags, the messages, the exit behaviour.
-There is also a house rule:
-
-> A claim the documentation makes about something else in the repository gets a
-> test holding the two together.
+Nothing else — the tests that read `README.md`, `CONTRIBUTING.md`, `ci.yml` and
+`.goreleaser.yaml` as text are gone, so keeping a document true to the code it
+describes is a matter of reading both when you change either.
 
 ## Commits, branches and pull requests
 

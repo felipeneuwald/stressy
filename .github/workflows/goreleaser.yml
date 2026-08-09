@@ -57,7 +57,8 @@ jobs:
 
   goreleaser:
     name: Release
-    # workflow_test.go fails if this edge disappears (#68).
+    # Load-bearing, and nothing tests it: without this edge a `v*` tag publishes
+    # whatever CI made of the commit, red or absent (#68).
     needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30

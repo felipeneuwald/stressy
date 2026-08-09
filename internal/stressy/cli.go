@@ -19,7 +19,7 @@ const useLine = "  " + name + " [flags]"
 // Description is what `stressy --help` prints above the usage block.
 // Duplicated from the README because in the FROM scratch image --help is the
 // only documentation that ships.
-const Description = `Stressy is a simple tool to perform CPU stress tests.
+const Description = `Stressy is a lightweight tool to perform CPU stress tests.
 
 Every setting is a flag; nothing is read from the environment.`
 

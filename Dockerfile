@@ -3,7 +3,7 @@
 FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/felipeneuwald/stressy"
-LABEL org.opencontainers.image.description="A simple stress test tool"
+LABEL org.opencontainers.image.description="A lightweight CPU stress test tool"
 LABEL org.opencontainers.image.licenses="MIT"
 
 # --chmod rather than RUN chmod, which scratch cannot run at all.

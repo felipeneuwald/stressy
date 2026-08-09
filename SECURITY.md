@@ -17,8 +17,9 @@ stressy takes three flags and three environment variables, hashes a seven-byte
 constant in a loop, and prints a handful of lines to stdout: no sockets, no
 config file, no untrusted input, nothing to disk. So the realistic surface is:
 
-- **The dependency graph.** Three direct dependencies. `govulncheck` runs in CI
-  on every push to main and every pull request, and dependabot checks weekly.
+- **The dependency graph.** One direct dependency, `golang.org/x/crypto`, and no
+  indirect ones. `govulncheck` runs in CI on every push to main and every pull
+  request, and dependabot checks weekly.
 - **The published images and binaries.** Verify a download against `checksums.txt`.
 - **The release pipeline itself.** `.goreleaser.yaml` and the `Dockerfile`
   decide what ships, so a change to either is security-relevant.

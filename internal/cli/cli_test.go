@@ -10,26 +10,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
-// newTestCmd builds the real command with a no-op RunE, output discarded. A
-// case setting its own STRESSY_* value must do so after this returns.
-func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
+// newTestCmd builds the real command with the stress test stubbed out and its
+// output discarded. A case setting its own STRESSY_* value must do so after
+// this returns.
+func newTestCmd(t *testing.T, cfg *stressy.Cfg) *command {
 	t.Helper()
 
 	clearStressyEnv(t)
 
-	c := NewCmd(cfg)
-	c.RunE = func(*cobra.Command, []string) error { return nil }
-
-	c.SilenceErrors = true
-
-	c.SetOut(io.Discard)
-	c.SetErr(io.Discard)
+	c := newCmd(cfg)
+	c.run = func(*stressy.Cfg) error { return nil }
+	c.stdout, c.stderr = io.Discard, io.Discard
 
 	return c
 }
@@ -38,12 +32,14 @@ func newTestCmd(t *testing.T, cfg *stressy.Cfg) *cobra.Command {
 func clearStressyEnv(t *testing.T) {
 	t.Helper()
 
-	NewCmd(&stressy.Cfg{}).Flags().VisitAll(func(f *pflag.Flag) {
-		t.Setenv(envName(envPrefix, f.Name), "")
-	})
+	for _, s := range Settings() {
+		if s.EnvVar != "" {
+			t.Setenv(s.EnvVar, "")
+		}
+	}
 }
 
-// TestBoundedRunExecutesTheStressTest runs the real RunE, the join to the engine (#53).
+// TestBoundedRunExecutesTheStressTest runs the real run, the join to the engine (#53).
 func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	const (
 		timeout = 50 * time.Millisecond
@@ -54,25 +50,25 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 	clearStressyEnv(t)
 
 	var cfg stressy.Cfg
-	cmd := NewCmd(&cfg)
-	cmd.SetArgs([]string{"-w", "1", "-t", timeout.String()})
+	cmd := newCmd(&cfg)
+	cmd.stderr = io.Discard
 
 	start := time.Now()
 
 	done := make(chan error, 1)
-	go func() { done <- cmd.Execute() }()
+	go func() { done <- cmd.execute([]string{"-w", "1", "-t", timeout.String()}) }()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Execute() error = %v, want a completed run", err)
+			t.Fatalf("execute() error = %v, want a completed run", err)
 		}
 	case <-time.After(budget):
-		t.Fatalf("Execute() did not return within %s of a run given %s", budget, timeout)
+		t.Fatalf("execute() did not return within %s of a run given %s", budget, timeout)
 	}
 
 	if elapsed := time.Since(start); elapsed < timeout {
-		t.Errorf("Execute() returned after %s, want at least the %s the run was given", elapsed, timeout)
+		t.Errorf("execute() returned after %s, want at least the %s the run was given", elapsed, timeout)
 	}
 
 	if cfg.Workers != 1 || cfg.Timeout != timeout {
@@ -83,16 +79,16 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 // TestFlagRegistration pins what `stressy --help` prints for every flag.
 func TestFlagRegistration(t *testing.T) {
 	tests := []struct {
-		name      string
-		shorthand string
-		flagType  string
-		defValue  string
-		wantUsage []string
+		name        string
+		shorthand   string
+		placeholder string
+		def         string
+		wantUsage   []string
 	}{
-		{name: "workers", shorthand: "w", flagType: "int", defValue: strconv.Itoa(defaultWorkers()), wantUsage: []string{"parallel workers"}},
+		{name: "workers", shorthand: "w", placeholder: "int", def: strconv.Itoa(defaultWorkers()), wantUsage: []string{"parallel workers"}},
 		// An int-of-seconds description gives no reason to try a duration (#26).
-		{name: "timeout", shorthand: "t", flagType: "duration", defValue: "0s", wantUsage: []string{"5m", "seconds"}},
-		{name: "report", shorthand: "r", flagType: "duration", defValue: "0s", wantUsage: []string{"5m", "seconds"}},
+		{name: "timeout", shorthand: "t", placeholder: "duration", def: "0s", wantUsage: []string{"5m", "seconds"}},
+		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"5m", "seconds"}},
 	}
 
 	var cfg stressy.Cfg
@@ -100,27 +96,46 @@ func TestFlagRegistration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := cmd.Flags().Lookup(tt.name)
-			if f == nil {
-				t.Fatalf("Lookup(%q) = nil, want the registered flag", tt.name)
+			s, ok := lookupSetting(cmd, tt.name)
+			if !ok {
+				t.Fatalf("the flag table has no %q row, want the registered flag", tt.name)
 			}
 
-			if f.Shorthand != tt.shorthand {
-				t.Errorf("%s shorthand = %q, want %q", tt.name, f.Shorthand, tt.shorthand)
+			if s.short != tt.shorthand {
+				t.Errorf("%s shorthand = %q, want %q", tt.name, s.short, tt.shorthand)
 			}
-			if f.Value.Type() != tt.flagType {
-				t.Errorf("%s type = %q, want %q", tt.name, f.Value.Type(), tt.flagType)
+			if s.placeholder != tt.placeholder {
+				t.Errorf("%s placeholder = %q, want %q", tt.name, s.placeholder, tt.placeholder)
 			}
-			if f.DefValue != tt.defValue {
-				t.Errorf("%s default = %q, want %q", tt.name, f.DefValue, tt.defValue)
+			if s.def != tt.def {
+				t.Errorf("%s default = %q, want %q", tt.name, s.def, tt.def)
 			}
 
 			for _, fragment := range tt.wantUsage {
-				if !strings.Contains(f.Usage, fragment) {
-					t.Errorf("%s usage = %q, want it to contain %q", tt.name, f.Usage, fragment)
+				if !strings.Contains(s.usage, fragment) {
+					t.Errorf("%s usage = %q, want it to contain %q", tt.name, s.usage, fragment)
 				}
 			}
 		})
+	}
+}
+
+// TestBothSpellingsShareOneValue is what makes `-w 4`, `--workers 4`,
+// `-workers 4` and `--w 4` one setting rather than two the flag package would
+// otherwise keep apart — and what bindEnv's short-to-long resolution rests on.
+func TestBothSpellingsShareOneValue(t *testing.T) {
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	for _, s := range cmd.flags {
+		long, short := cmd.fs.Lookup(s.long), cmd.fs.Lookup(s.short)
+		if long == nil || short == nil {
+			t.Fatalf("--%s is registered as %v and -%s as %v, want both", s.long, long, s.short, short)
+		}
+
+		if long.Value != short.Value {
+			t.Errorf("--%s and -%s hold different values, so one of the two spellings writes somewhere nothing reads", s.long, s.short)
+		}
 	}
 }
 
@@ -142,6 +157,14 @@ func TestConfigResolution(t *testing.T) {
 			wantReport:  15 * time.Second,
 		},
 		{
+			// Every spelling one Var pair admits, on one command line.
+			name:        "every spelling of a flag",
+			args:        []string{"--workers", "4", "-timeout", "30", "--r", "15s"},
+			wantWorkers: 4,
+			wantTimeout: 30 * time.Second,
+			wantReport:  15 * time.Second,
+		},
+		{
 			name:        "environment variables",
 			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60"},
 			wantWorkers: 8,
@@ -150,6 +173,15 @@ func TestConfigResolution(t *testing.T) {
 		{
 			name:        "flags take precedence over environment variables",
 			env:         map[string]string{"STRESSY_WORKERS": "8", "STRESSY_TIMEOUT": "60"},
+			args:        []string{"-w", "2", "-t", "5"},
+			wantWorkers: 2,
+			wantTimeout: 5 * time.Second,
+		},
+		{
+			// The shorthand marks `w`, not `workers`; unresolved, the variable
+			// would win a precedence contest it is meant to lose.
+			name:        "a shorthand takes precedence over its environment variable",
+			env:         map[string]string{"STRESSY_WORKERS": "8"},
 			args:        []string{"-w", "2", "-t", "5"},
 			wantWorkers: 2,
 			wantTimeout: 5 * time.Second,
@@ -179,10 +211,8 @@ func TestConfigResolution(t *testing.T) {
 				t.Setenv(k, v)
 			}
 
-			cmd.SetArgs(tt.args)
-
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("Execute() error = %v, want nil", err)
+			if err := cmd.execute(tt.args); err != nil {
+				t.Fatalf("execute() error = %v, want nil", err)
 			}
 
 			if cfg.Workers != tt.wantWorkers {
@@ -223,11 +253,9 @@ func TestMalformedEnvValueIsRejected(t *testing.T) {
 
 			t.Setenv(tt.env, tt.value)
 
-			cmd.SetArgs(tt.other)
-
-			err := cmd.Execute()
+			err := cmd.execute(tt.other)
 			if err == nil {
-				t.Fatalf("Execute() with %s=%s error = nil, want the malformed value to be rejected", tt.env, tt.value)
+				t.Fatalf("execute() with %s=%s error = nil, want the malformed value to be rejected", tt.env, tt.value)
 			}
 
 			checkMalformedMessage(t, err, tt.env, tt.value, tt.want)
@@ -241,11 +269,10 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
-			cmd.SetArgs(append([]string{tt.flag, tt.value}, tt.other...))
 
-			err := cmd.Execute()
+			err := cmd.execute(append([]string{tt.flag, tt.value}, tt.other...))
 			if err == nil {
-				t.Fatalf("Execute(%s %s) error = nil, want a parse error", tt.flag, tt.value)
+				t.Fatalf("execute(%s %s) error = nil, want a parse error", tt.flag, tt.value)
 			}
 
 			checkMalformedMessage(t, err, tt.flag, tt.value, tt.want)
@@ -268,8 +295,10 @@ func checkMalformedMessage(t *testing.T, err error, source, value, want string) 
 	}
 }
 
-// TestFlagsCobraSetItselfAreNotConfigurable covers #47: STRESSY_VERSION aborted runs.
-func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
+// TestHelpAndVersionAreNotConfigurable covers #47: STRESSY_VERSION aborted runs.
+// stressy registers both flags itself now, so nothing marks them as off limits
+// but bindEnv walking the table rather than the flag set.
+func TestHelpAndVersionAreNotConfigurable(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -288,15 +317,14 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 			}
 
 			var ran bool
-			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
-			cmd.SetArgs([]string{"-w", "1", "-t", "100ms"})
+			cmd.run = func(*stressy.Cfg) error { ran = true; return nil }
 
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("Execute() error = %v, want the run the operator asked for", err)
+			if err := cmd.execute([]string{"-w", "1", "-t", "100ms"}); err != nil {
+				t.Fatalf("execute() error = %v, want the run the operator asked for", err)
 			}
 
 			if !ran {
-				t.Error("RunE was not called, want the stress test to run")
+				t.Error("run was not called, want the stress test to run")
 			}
 
 			if cfg.Workers != 1 || cfg.Timeout != 100*time.Millisecond {
@@ -306,15 +334,15 @@ func TestFlagsCobraSetItselfAreNotConfigurable(t *testing.T) {
 	}
 }
 
-// TestFlagsCobraSetItselfWorkOnTheCommandLine is #47's other half: the flags still work.
-func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
+// TestHelpAndVersionWorkOnTheCommandLine is #47's other half: the flags still work.
+func TestHelpAndVersionWorkOnTheCommandLine(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
-		{name: "version", args: []string{"--version"}, want: "version " + version},
-		{name: "version shorthand", args: []string{"-v"}, want: "version " + version},
+		{name: "version", args: []string{"--version"}, want: "stressy version " + version},
+		{name: "version shorthand", args: []string{"-v"}, want: "stressy version " + version},
 		{name: "help", args: []string{"--help"}, want: "Usage:"},
 		{name: "help shorthand", args: []string{"-h"}, want: "Usage:"},
 	}
@@ -325,23 +353,46 @@ func TestFlagsCobraSetItselfWorkOnTheCommandLine(t *testing.T) {
 			cmd := newTestCmd(t, &cfg)
 
 			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetErr(&out)
+			cmd.stdout, cmd.stderr = &out, &out
 
 			var ran bool
-			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
-			cmd.SetArgs(tt.args)
+			cmd.run = func(*stressy.Cfg) error { ran = true; return nil }
 
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("Execute(%q) error = %v, want nil", tt.args, err)
+			if err := cmd.execute(tt.args); err != nil {
+				t.Fatalf("execute(%q) error = %v, want nil", tt.args, err)
 			}
 
 			if ran {
-				t.Errorf("Execute(%q) ran the stress test, want cobra to have answered and returned", tt.args)
+				t.Errorf("execute(%q) ran the stress test, want the flag answered and nothing else", tt.args)
 			}
 
 			if !strings.Contains(out.String(), tt.want) {
-				t.Errorf("Execute(%q) printed %q, want it to contain %q", tt.args, out.String(), tt.want)
+				t.Errorf("execute(%q) printed %q, want it to contain %q", tt.args, out.String(), tt.want)
+			}
+		})
+	}
+}
+
+// TestHelpAndVersionGoToStdout: an operator piping `--help` into a pager, or
+// `--version` into a variable, gets the answer rather than an empty stream.
+func TestHelpAndVersionGoToStdout(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"--version"}} {
+		t.Run(args[0], func(t *testing.T) {
+			var cfg stressy.Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			var out, errOut bytes.Buffer
+			cmd.stdout, cmd.stderr = &out, &errOut
+
+			if err := cmd.execute(args); err != nil {
+				t.Fatalf("execute(%q) error = %v, want nil", args, err)
+			}
+
+			if out.Len() == 0 {
+				t.Errorf("execute(%q) printed nothing to stdout", args)
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("execute(%q) printed %q to stderr, want the answer on stdout alone", args, errOut.String())
 			}
 		})
 	}
@@ -360,10 +411,9 @@ func TestWorkersDefaultsToUsableCPUs(t *testing.T) {
 
 	var cfg stressy.Cfg
 	cmd := newTestCmd(t, &cfg)
-	cmd.SetArgs(nil)
 
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v, want nil", err)
+	if err := cmd.execute(nil); err != nil {
+		t.Fatalf("execute() error = %v, want nil", err)
 	}
 
 	if cfg.Workers != want {
@@ -393,15 +443,14 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var cfg stressy.Cfg
 			cmd := newTestCmd(t, &cfg)
-			cmd.SetArgs(tt.args)
 
-			err := cmd.Execute()
+			err := cmd.execute(tt.args)
 			if err == nil {
-				t.Fatalf("Execute(%q) error = nil, want the argument to be rejected", tt.args)
+				t.Fatalf("execute(%q) error = nil, want the argument to be rejected", tt.args)
 			}
 
 			if !strings.Contains(err.Error(), tt.wantArg) {
-				t.Errorf("Execute(%q) error = %q, want it to name %q", tt.args, err, tt.wantArg)
+				t.Errorf("execute(%q) error = %q, want it to name %q", tt.args, err, tt.wantArg)
 			}
 		})
 	}
@@ -421,7 +470,7 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 		{name: "invalid flag value", args: []string{"-t", "not-a-number"}},
 		{name: "positional argument", args: []string{"4"}},
 		{name: "rejected environment variable", env: map[string]string{"STRESSY_TIMEOUT": "not-a-number"}, wantSilence: true},
-		// Why parseWorkers checks no range: pflag rejecting it means usage (#17a).
+		// Why parseWorkers checks no range: the parser rejecting it means usage (#17a).
 		{name: "out-of-range flag value", args: []string{"-w", "0"}, wantSilence: true},
 		{name: "out-of-range environment variable", env: map[string]string{"STRESSY_WORKERS": "0"}, args: []string{"-t", "100ms"}, wantSilence: true},
 		{name: "runtime failure", runErr: errors.New("workers must be 1 or greater"), wantSilence: true},
@@ -437,25 +486,81 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 			}
 
 			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetErr(&out)
+			cmd.stdout, cmd.stderr = &out, &out
 
-			cmd.RunE = func(*cobra.Command, []string) error { return tt.runErr }
-			cmd.SetArgs(tt.args)
+			cmd.run = func(*stressy.Cfg) error { return tt.runErr }
 
-			if err := cmd.Execute(); err == nil {
-				t.Fatal("Execute() error = nil, want the case to fail")
+			err := cmd.execute(tt.args)
+			if err == nil {
+				t.Fatal("execute() error = nil, want the case to fail")
 			}
 
 			// The behaviour, not the field a hand-printed screen would leave green (#60).
 			wantUsage := !tt.wantSilence
 			if gotUsage := strings.Contains(out.String(), "Usage:"); gotUsage != wantUsage {
-				t.Errorf("Execute(%q) printed:\n%s\nwant the usage screen printed = %t", tt.args, out.String(), wantUsage)
+				t.Errorf("execute(%q) printed:\n%s\nwant the usage screen printed = %t", tt.args, out.String(), wantUsage)
 			}
 
-			if cmd.SilenceUsage != tt.wantSilence {
-				t.Errorf("SilenceUsage = %t, want %t", cmd.SilenceUsage, tt.wantSilence)
+			// And the type it is selected by, which is the whole of the split now.
+			if _, isUsage := errors.AsType[*usageError](err); isUsage == tt.wantSilence {
+				t.Errorf("execute(%q) error = %q is a usage error = %t, want %t", tt.args, err, isUsage, wantUsage)
 			}
 		})
 	}
+}
+
+// TestErrorsGoToStderr: a supervisor reading stdout for the run summary must
+// not find a rejected command line there, flag list and all.
+func TestErrorsGoToStderr(t *testing.T) {
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	var out, errOut bytes.Buffer
+	cmd.stdout, cmd.stderr = &out, &errOut
+
+	if err := cmd.execute([]string{"-w", "2", "4"}); err == nil {
+		t.Fatal("execute() error = nil, want the argument to be rejected")
+	}
+
+	if out.Len() != 0 {
+		t.Errorf("execute() printed %q to stdout, want a rejected command line reported on stderr alone", out.String())
+	}
+
+	for _, fragment := range []string{"Error: ", "Usage:", "Examples:", "Flags:"} {
+		if !strings.Contains(errOut.String(), fragment) {
+			t.Errorf("execute() stderr =\n%s\nwant it to contain %q", errOut.String(), fragment)
+		}
+	}
+}
+
+// TestHelpPrintsTheCapturedDefault is the one case in which rendering the Flags
+// block from the live Value diverges from rendering the table: the usage that
+// follows a rejected command line would report the 2 that was typed as the
+// default, and an operator would read it as the number a bare `stressy` starts.
+func TestHelpPrintsTheCapturedDefault(t *testing.T) {
+	var cfg stressy.Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	var out bytes.Buffer
+	cmd.stdout, cmd.stderr = &out, &out
+
+	if err := cmd.execute([]string{"-w", "2", "4"}); err == nil {
+		t.Fatal("execute() error = nil, want the argument to be rejected")
+	}
+
+	want := "(default " + strconv.Itoa(defaultWorkers()) + ")"
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("execute() printed:\n%s\nwant the --workers line to end in %q", out.String(), want)
+	}
+}
+
+// lookupSetting returns the table row a flag name is registered from.
+func lookupSetting(c *command, long string) (setting, bool) {
+	for _, s := range c.flags {
+		if s.long == long {
+			return s, true
+		}
+	}
+
+	return setting{}, false
 }

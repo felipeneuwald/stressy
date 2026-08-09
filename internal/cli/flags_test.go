@@ -1,19 +1,20 @@
 package cli
 
 import (
+	"flag"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/cobra"
 )
 
 // acceptedValue is a spelling Set must take and what the flag prints afterwards.
 type acceptedValue struct{ set, want string }
 
-// TestFlagValues covers both pflag.Value adapters as pflag sees them: the default
-// through the caller's pointer, the help text, and every accepted spelling.
+// TestFlagValues covers both flag.Value adapters as the flag package sees them:
+// the default through the caller's pointer, the placeholder the help text is
+// built from, every accepted spelling, and the message a rejected one produces.
 func TestFlagValues(t *testing.T) {
 	var (
 		workers int
@@ -22,7 +23,7 @@ func TestFlagValues(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		register      func(*cobra.Command)
+		register      func(*flag.FlagSet)
 		get           func() string
 		wantType      string
 		wantDef       string
@@ -34,8 +35,8 @@ func TestFlagValues(t *testing.T) {
 	}{
 		{
 			name: "workers",
-			register: func(c *cobra.Command) {
-				c.Flags().VarP(newWorkersValue(8, &workers), "workers", "w", "number of parallel workers")
+			register: func(fs *flag.FlagSet) {
+				fs.Var(newWorkersValue(8, &workers), "workers", "number of parallel workers")
 			},
 			get:           func() string { return strconv.Itoa(workers) },
 			wantType:      "int",
@@ -47,8 +48,8 @@ func TestFlagValues(t *testing.T) {
 		},
 		{
 			name: "timeout",
-			register: func(c *cobra.Command) {
-				c.Flags().VarP(newDurationValue(90*time.Second, &timeout), "timeout", "t", "how long to run")
+			register: func(fs *flag.FlagSet) {
+				fs.Var(newDurationValue(90*time.Second, &timeout), "timeout", "how long to run")
 			},
 			get:      func() string { return timeout.String() },
 			wantType: "duration",
@@ -62,17 +63,26 @@ func TestFlagValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &cobra.Command{Use: "test"}
-			tt.register(c)
+			fs := flag.NewFlagSet("test", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			tt.register(fs)
 
-			f := c.Flags().Lookup(tt.name)
+			f := fs.Lookup(tt.name)
 			if f == nil {
 				t.Fatalf("Lookup(%q) = nil, want the registered flag", tt.name)
 			}
 
-			if f.Value.Type() != tt.wantType {
-				t.Errorf("%s type = %q, want %q", tt.name, f.Value.Type(), tt.wantType)
+			// The flag package has no use for Type; the Flags block does, as the
+			// placeholder in `-t, --timeout duration`.
+			placeholder, ok := f.Value.(interface{ Type() string })
+			if !ok {
+				t.Fatalf("%s value has no Type method, which is what --help prints after the flag name", tt.name)
 			}
+			if got := placeholder.Type(); got != tt.wantType {
+				t.Errorf("%s type = %q, want %q", tt.name, got, tt.wantType)
+			}
+
+			// Recorded by the flag package at registration, from String.
 			if f.DefValue != tt.wantDef {
 				t.Errorf("%s default = %q, want %q", tt.name, f.DefValue, tt.wantDef)
 			}
@@ -81,7 +91,7 @@ func TestFlagValues(t *testing.T) {
 			}
 
 			for _, a := range tt.accepted {
-				if err := c.Flags().Set(tt.name, a.set); err != nil {
+				if err := fs.Set(tt.name, a.set); err != nil {
 					t.Fatalf("Set(%q) error = %v, want nil", a.set, err)
 				}
 				if got := tt.get(); got != a.want {
@@ -92,20 +102,44 @@ func TestFlagValues(t *testing.T) {
 				}
 			}
 
-			err := c.Flags().Set(tt.name, tt.badValue)
+			// Through Parse rather than Set, because the message an operator
+			// reads is the one the flag package builds around this one.
+			err := fs.Parse([]string{"-" + tt.name, tt.badValue})
 			if err == nil {
-				t.Fatalf("Set(%q) error = nil, want a parse error", tt.badValue)
+				t.Fatalf("Parse(-%s %q) error = nil, want a parse error", tt.name, tt.badValue)
 			}
 
 			for _, fragment := range tt.wantFragments {
 				if !strings.Contains(err.Error(), fragment) {
-					t.Errorf("Set(%q) error = %q, want it to contain %q", tt.badValue, err, fragment)
+					t.Errorf("Parse(-%s %q) error = %q, want it to contain %q", tt.name, tt.badValue, err, fragment)
 				}
 			}
 
 			if tt.noStrconv && strings.Contains(err.Error(), "strconv") {
-				t.Errorf("Set(%q) error = %q, want no strconv internals in it (#50)", tt.badValue, err)
+				t.Errorf("Parse(-%s %q) error = %q, want no strconv internals in it (#50)", tt.name, tt.badValue, err)
 			}
 		})
+	}
+}
+
+// TestBoolValueTakesNoArgument is what IsBoolFlag buys: without it `stressy -h`
+// reads the next word as --help's value, and `stressy -h -w 4` loses the 4.
+func TestBoolValueTakesNoArgument(t *testing.T) {
+	var help bool
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Var(newBoolValue(&help), "help", "help for stressy")
+
+	if err := fs.Parse([]string{"-help", "rest"}); err != nil {
+		t.Fatalf("Parse() error = %v, want nil", err)
+	}
+
+	if !help {
+		t.Error("--help = false after `-help`, want true")
+	}
+
+	if args := fs.Args(); len(args) != 1 || args[0] != "rest" {
+		t.Errorf("Args() = %q, want the word after `-help` left as an argument", args)
 	}
 }

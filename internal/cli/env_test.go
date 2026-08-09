@@ -1,36 +1,29 @@
 package cli
 
 import (
+	"flag"
+	"io"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
 // testPrefix rather than STRESSY, so an ambient STRESSY_* cannot reach a case.
 const testPrefix = "FLAGTEST"
 
-// newCmdWithIntFlag builds a bare command carrying a single int flag.
-func newCmdWithIntFlag(t *testing.T, name string, p *int, defaultValue int) *cobra.Command {
+// newIntSetting builds a bare flag set carrying a single int-valued setting,
+// and the one-row table bindEnv reads it through. workersValue rather than
+// flag.IntVar, because bindEnv names the variable and the Value names the bad
+// value, and stock IntVar reports a bare "parse error" that names neither.
+func newIntSetting(t *testing.T, name string, p *int, defaultValue int) (*flag.FlagSet, []setting) {
 	t.Helper()
 
-	c := &cobra.Command{Use: "test"}
-	c.Flags().IntVar(p, name, defaultValue, "number of workers")
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 
-	return c
-}
+	value := newWorkersValue(defaultValue, p)
+	fs.Var(value, name, "number of workers")
 
-// newCmdWithCobraFlags adds cobra's own --help and --version the way Execute does.
-func newCmdWithCobraFlags(t *testing.T, p *int) *cobra.Command {
-	t.Helper()
-
-	// InitDefaultVersionFlag registers nothing unless Version is set.
-	c := newCmdWithIntFlag(t, "workers", p, 1)
-	c.Version = "0.0.0-test"
-	c.InitDefaultHelpFlag()
-	c.InitDefaultVersionFlag()
-
-	return c
+	return fs, []setting{{long: name, usage: "number of workers", env: true, value: value}}
 }
 
 func TestBindEnv(t *testing.T) {
@@ -39,7 +32,8 @@ func TestBindEnv(t *testing.T) {
 		env         map[string]string
 		commandLine string
 		want        int
-		// wantSource is what pflag's own Changed cannot answer (#51).
+		// wantSource is what the flag set's own record of what was set cannot
+		// answer: which variable a value arrived through (#51).
 		wantSource string
 	}{
 		{name: "nothing set keeps the default", want: 1},
@@ -57,15 +51,15 @@ func TestBindEnv(t *testing.T) {
 			}
 
 			var workers int
-			c := newCmdWithIntFlag(t, "workers", &workers, 1)
+			fs, flags := newIntSetting(t, "workers", &workers, 1)
 
 			if tt.commandLine != "" {
-				if err := c.Flags().Set("workers", tt.commandLine); err != nil {
-					t.Fatalf("Set() error = %v, want nil", err)
+				if err := fs.Parse([]string{"-workers", tt.commandLine}); err != nil {
+					t.Fatalf("Parse() error = %v, want nil", err)
 				}
 			}
 
-			fromEnv, err := bindEnv(c, testPrefix)
+			fromEnv, err := bindEnv(fs, flags, testPrefix)
 			if err != nil {
 				t.Fatalf("bindEnv() error = %v, want nil", err)
 			}
@@ -86,9 +80,9 @@ func TestBindEnvMalformedValue(t *testing.T) {
 	t.Setenv("FLAGTEST_WORKERS", "not-a-number")
 
 	var workers int
-	c := newCmdWithIntFlag(t, "workers", &workers, 1)
+	fs, flags := newIntSetting(t, "workers", &workers, 1)
 
-	fromEnv, err := bindEnv(c, testPrefix)
+	fromEnv, err := bindEnv(fs, flags, testPrefix)
 	if err == nil {
 		t.Fatal("bindEnv() error = nil, want the malformed value to be rejected")
 	}
@@ -103,8 +97,10 @@ func TestBindEnvMalformedValue(t *testing.T) {
 	}
 }
 
-// TestBindEnvIgnoresFlagsCobraSetItself covers #47: cobra acts before bindEnv runs.
-func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
+// TestBindEnvSkipsWhatTheEnvironmentCannotFill covers #47: STRESSY_VERSION=0.4.0
+// aborted every run. Nothing marks --help and --version now that stressy
+// registers them itself, so the whole of the exclusion is the table row.
+func TestBindEnvSkipsWhatTheEnvironmentCannotFill(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
@@ -119,27 +115,30 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 				t.Setenv(k, v)
 			}
 
-			var workers int
-			c := newCmdWithCobraFlags(t, &workers)
+			var (
+				workers           int
+				help, showVersion bool
+			)
 
-			fromEnv, err := bindEnv(c, testPrefix)
+			fs, flags := newIntSetting(t, "workers", &workers, 1)
+			flags = append(flags,
+				setting{long: "help", short: "h", value: newBoolValue(&help)},
+				setting{long: "version", short: "v", value: newBoolValue(&showVersion)},
+			)
+
+			fromEnv, err := bindEnv(fs, flags, testPrefix)
 			if err != nil {
 				t.Fatalf("bindEnv() error = %v, want nil", err)
 			}
 
 			for _, name := range []string{"help", "version"} {
 				if source, ok := fromEnv[name]; ok {
-					t.Errorf("bindEnv() reports --%s as filled from %q, want cobra's own flags left out entirely", name, source)
+					t.Errorf("bindEnv() reports --%s as filled from %q, want a setting the environment cannot fill left out entirely", name, source)
 				}
+			}
 
-				f := c.Flags().Lookup(name)
-				if f == nil {
-					t.Fatalf("Lookup(%q) = nil, want the flag cobra registers", name)
-				}
-
-				if f.Changed || f.Value.String() != "false" {
-					t.Errorf("--%s = %q, changed = %t; want %q and untouched", name, f.Value.String(), f.Changed, "false")
-				}
+			if help || showVersion {
+				t.Errorf("--help, --version = %t, %t; want both untouched", help, showVersion)
 			}
 
 			if workers != 8 {
@@ -149,30 +148,37 @@ func TestBindEnvIgnoresFlagsCobraSetItself(t *testing.T) {
 	}
 }
 
-// TestCobraAnnotatesItsOwnFlags: a cobra bump dropping it would revive #47.
-func TestCobraAnnotatesItsOwnFlags(t *testing.T) {
+// TestBindEnvResolvesShorthands: Visit reports the spelling that was typed, so
+// `-w 4` marks `w`. Unresolved, FLAGTEST_WORKERS would overwrite it (#51).
+func TestBindEnvResolvesShorthands(t *testing.T) {
+	t.Setenv("FLAGTEST_WORKERS", "8")
+
 	var workers int
-	c := newCmdWithCobraFlags(t, &workers)
 
-	for _, name := range []string{"help", "version"} {
-		f := c.Flags().Lookup(name)
-		if f == nil {
-			t.Fatalf("Lookup(%q) = nil, want cobra to have registered its flag", name)
-		}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 
-		if !SetByCobra(f) {
-			t.Errorf("--%s carries no %s annotation, which is how bindEnv knows to leave it alone (#47)", name, cobra.FlagSetByCobraAnnotation)
-		}
+	value := newWorkersValue(1, &workers)
+	fs.Var(value, "workers", "number of workers")
+	fs.Var(value, "w", "number of workers")
+
+	flags := []setting{{long: "workers", short: "w", env: true, value: value}}
+
+	if err := fs.Parse([]string{"-w", "4"}); err != nil {
+		t.Fatalf("Parse() error = %v, want nil", err)
 	}
 
-	// And stressy's own flag must not carry it, or the exclusion swallows it.
-	f := c.Flags().Lookup("workers")
-	if f == nil {
-		t.Fatal(`Lookup("workers") = nil, want the registered flag`)
+	fromEnv, err := bindEnv(fs, flags, testPrefix)
+	if err != nil {
+		t.Fatalf("bindEnv() error = %v, want nil", err)
 	}
 
-	if SetByCobra(f) {
-		t.Errorf("--workers carries the %s annotation, so the exclusion would swallow stressy's own flags", cobra.FlagSetByCobraAnnotation)
+	if workers != 4 {
+		t.Errorf("workers = %d, want the 4 the shorthand set", workers)
+	}
+
+	if source, ok := fromEnv["workers"]; ok {
+		t.Errorf("bindEnv() reports workers as filled from %q, want a flag given on the command line left alone", source)
 	}
 }
 
@@ -181,9 +187,9 @@ func TestBindEnvMultiWordFlagName(t *testing.T) {
 	t.Setenv("FLAGTEST_MAX_RETRIES", "3")
 
 	var retries int
-	c := newCmdWithIntFlag(t, "max-retries", &retries, 0)
+	fs, flags := newIntSetting(t, "max-retries", &retries, 0)
 
-	fromEnv, err := bindEnv(c, testPrefix)
+	fromEnv, err := bindEnv(fs, flags, testPrefix)
 	if err != nil {
 		t.Fatalf("bindEnv() error = %v, want nil", err)
 	}

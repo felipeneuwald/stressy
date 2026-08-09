@@ -8,14 +8,15 @@ import (
 	"time"
 )
 
-// durationValue adapts time.Duration to the pflag.Value interface. A bare number
+// durationValue adapts time.Duration to the flag.Value interface. A bare number
 // has meant seconds since 0.1.0 and time.ParseDuration rejects exactly that
 // input, so this accepts both spellings and the two cannot collide.
 type durationValue time.Duration
 
-// newDurationValue writes the default through p, as pflag's own *VarP helpers do.
+// newDurationValue writes the default through p, as flag's own DurationVar does.
 func newDurationValue(val time.Duration, p *time.Duration) *durationValue {
 	*p = val
+
 	return (*durationValue)(p)
 }
 
@@ -30,7 +31,8 @@ func (d *durationValue) Set(s string) error {
 	return nil
 }
 
-// Type is the placeholder pflag prints in help text, as in `--timeout duration`.
+// Type is the placeholder the Flags block prints, as in `--timeout duration`.
+// The flag package has no use for it and ignores the extra method.
 func (d *durationValue) Type() string { return "duration" }
 
 func (d *durationValue) String() string { return time.Duration(*d).String() }
@@ -58,12 +60,12 @@ func parseDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// workersValue adapts the worker count to the pflag.Value interface. Stock
-// IntVarP reports `strconv.ParseInt: parsing "abc"` at an operator who may not
+// workersValue adapts the worker count to the flag.Value interface. Stock
+// IntVar reports `strconv.ParseInt: parsing "abc"` at an operator who may not
 // write Go; named after the flag, because the message it produces names it.
 type workersValue int
 
-// newWorkersValue writes the default through p, as pflag's own *VarP helpers do.
+// newWorkersValue writes the default through p, as flag's own IntVar does.
 func newWorkersValue(val int, p *int) *workersValue {
 	*p = val
 
@@ -81,17 +83,19 @@ func (w *workersValue) Set(s string) error {
 	return nil
 }
 
-// Type is the placeholder pflag prints in help text, as in `-w, --workers int`.
+// Type is the placeholder the Flags block prints, as in `-w, --workers int`.
+// The flag package has no use for it and ignores the extra method.
 func (w *workersValue) Type() string { return "int" }
 
-// String is what pflag prints for a set flag, and also what it records as
-// DefValue, which is where the `(default N)` in the help line comes from.
+// String is what the flag package prints for a set flag, and what it records as
+// DefValue at registration — which is where the `(default N)` in the help line
+// comes from, captured before a command line can overwrite the value.
 func (w *workersValue) String() string { return strconv.Itoa(int(*w)) }
 
 // parseWorkers parses a worker count. The range is deliberately not checked
-// here — a value pflag's parser rejects is a usage error and cobra answers those
-// with the flag list — so 0 and -1 parse, and validateRanges rejects them a
-// moment later with usage silenced.
+// here — a value the parser rejects is a usage error and gets the flag list
+// with it — so 0 and -1 parse, and validateRanges rejects them a moment later
+// as the runtime errors they are (#17a).
 func parseWorkers(s string) (int, error) {
 	n, err := strconv.Atoi(s)
 	if err == nil {
@@ -105,3 +109,29 @@ func parseWorkers(s string) (int, error) {
 
 	return 0, fmt.Errorf("invalid workers %q: want a whole number, 1 or greater", s)
 }
+
+// boolValue is what --help and --version are registered as. flag.BoolVar cannot
+// be used for either: both spellings of a flag have to write through one Value,
+// and BoolVar makes a new one per name.
+type boolValue bool
+
+// newBoolValue leaves p as it is; both flags default to false, and false is the
+// zero value of the field each writes through.
+func newBoolValue(p *bool) *boolValue { return (*boolValue)(p) }
+
+func (b *boolValue) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return fmt.Errorf("invalid boolean %q: want true or false", s)
+	}
+
+	*b = boolValue(v)
+
+	return nil
+}
+
+// IsBoolFlag is how the flag package knows `-h` takes no value of its own. Both
+// flags would want one without it, and `stressy -h` would consume what follows.
+func (b *boolValue) IsBoolFlag() bool { return true }
+
+func (b *boolValue) String() string { return strconv.FormatBool(bool(*b)) }

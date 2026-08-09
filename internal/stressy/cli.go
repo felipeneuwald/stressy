@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ Every setting is a flag; nothing is read from the environment.`
 // TestDocumentedInvocationsAreValid runs every line of this through the parser,
 // so an example naming a flag that no longer exists fails the build rather than
 // the reader.
-const Examples = `  # Load the machine until interrupted
+const Examples = `  # One worker until interrupted
   stressy
 
   # Four workers for five minutes
@@ -37,8 +36,8 @@ const Examples = `  # Load the machine until interrupted
   # A progress line every 30 seconds; without one a run prints nothing until it ends
   stressy -t 30m -r 30s
 
-  # In a container the CPU limit sets the worker count
-  docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 30s`
+  # In a container, as many workers as the limit pays for
+  docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -w 2 -t 30s`
 
 // setting is one row of the flag table: how a flag registers and how the Flags
 // block prints it. One table drives registration and rendering both, which is
@@ -101,7 +100,15 @@ func newCmd(cfg *Cfg) *command {
 
 	// Var rather than IntVar: the stock parser reports strconv's own error,
 	// which names a Go standard library function at an operator. See workersValue.
-	workers := newWorkersValue(defaultWorkers(), &cfg.Workers)
+	//
+	// One worker, and the same one worker everywhere. The default was
+	// GOMAXPROCS(0) for the length of 0.5.0, which is the host's core count
+	// narrowed by the affinity mask, by a cgroup quota and by $GOMAXPROCS —
+	// three of those four invisible at the command line, so a bare `stressy`
+	// meant something different on a laptop, in a container and in a pod, and
+	// the operator had to reconstruct which. An operator who wants the machine
+	// saturated says so: `-w $(nproc)` (#104).
+	workers := newWorkersValue(1, &cfg.Workers)
 
 	// Var rather than DurationVar for the same reason: the stock parser rejects
 	// a bad duration as a bare "parse error". See durationValue.
@@ -139,7 +146,7 @@ func newCmd(cfg *Cfg) *command {
 		},
 		{
 			long: "workers", short: "w", placeholder: workers.Type(), def: workers.String(),
-			usage: "number of parallel workers for CPU stress testing; the default is the number of CPUs this process can use",
+			usage: "number of parallel workers for CPU stress testing; nothing is inferred from the machine, so raise it to load more than one CPU",
 			value: workers,
 		},
 	}
@@ -275,14 +282,6 @@ func (c *command) writeFlags(b *strings.Builder) {
 
 		b.WriteByte('\n')
 	}
-}
-
-// defaultWorkers is how many workers a bare `stressy` starts: as many as this
-// process can have running at once. GOMAXPROCS(0) rather than NumCPU, which
-// ignores a cgroup CPU quota and so reports 64 on a 64-core node held to
-// `limits.cpu: 2`. Passing 0 reads the value without setting it.
-func defaultWorkers() int {
-	return runtime.GOMAXPROCS(0)
 }
 
 // Parse resolves one command line into cfg the way a run does — the flags, then

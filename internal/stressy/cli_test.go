@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +65,7 @@ func TestFlagRegistration(t *testing.T) {
 		def         string
 		wantUsage   []string
 	}{
-		{name: "workers", shorthand: "w", placeholder: "int", def: strconv.Itoa(defaultWorkers()), wantUsage: []string{"parallel workers"}},
+		{name: "workers", shorthand: "w", placeholder: "int", def: "1", wantUsage: []string{"parallel workers"}},
 		// An int-of-seconds description gives no reason to try a duration (#26).
 		{name: "timeout", shorthand: "t", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
 		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
@@ -177,6 +175,13 @@ func TestConfigResolution(t *testing.T) {
 			name:        "only the flags given are set",
 			args:        []string{"-w", "8"},
 			wantWorkers: 8,
+		},
+		{
+			// #104: the default was GOMAXPROCS(0), so a bare `stressy` started
+			// a different number of workers on a laptop, in a container and in
+			// a pod. One is the same number in all three.
+			name:        "a bare stressy starts one worker",
+			wantWorkers: 1,
 		},
 	}
 
@@ -349,35 +354,6 @@ func TestHelpAndVersionGoToStdout(t *testing.T) {
 	}
 }
 
-// TestWorkersDefaultsToUsableCPUs covers #24: NumCPU ignores a cgroup quota.
-func TestWorkersDefaultsToUsableCPUs(t *testing.T) {
-	want := 3
-	if runtime.NumCPU() == want {
-		// Otherwise NumCPU would satisfy this too and the case proves nothing.
-		want = 2
-	}
-
-	prev := runtime.GOMAXPROCS(want)
-	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
-
-	var cfg Cfg
-	cmd := newTestCmd(t, &cfg)
-
-	if err := cmd.execute(nil); err != nil {
-		t.Fatalf("execute() error = %v, want nil", err)
-	}
-
-	if cfg.Workers != want {
-		t.Errorf("Workers = %d with GOMAXPROCS at %d and NumCPU at %d, want %d", cfg.Workers, want, runtime.NumCPU(), want)
-	}
-	if cfg.Timeout != 0 {
-		t.Errorf("Timeout = %s with nothing setting it, want 0", cfg.Timeout)
-	}
-	if cfg.Report != 0 {
-		t.Errorf("Report = %s with nothing setting it, want 0", cfg.Report)
-	}
-}
-
 // TestPositionalArgumentsAreRejected covers #17b: `stressy 4` ignored the 4.
 func TestPositionalArgumentsAreRejected(t *testing.T) {
 	tests := []struct {
@@ -492,7 +468,9 @@ func TestHelpPrintsTheCapturedDefault(t *testing.T) {
 		t.Fatal("execute() error = nil, want the argument to be rejected")
 	}
 
-	want := "(default " + strconv.Itoa(defaultWorkers()) + ")"
+	// The literal, not the registered Value: reading the number back off the
+	// code under test would leave this green whatever the two of them agreed on.
+	want := "(default 1)"
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("execute() printed:\n%s\nwant the --workers line to end in %q", out.String(), want)
 	}

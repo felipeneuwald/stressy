@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--workers` defaults to 1 again, not the number of CPUs available.
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
 

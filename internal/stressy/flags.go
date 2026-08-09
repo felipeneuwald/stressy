@@ -75,8 +75,8 @@ func (w *workersValue) String() string { return strconv.Itoa(int(*w)) }
 
 // parseWorkers parses a worker count. The range is deliberately not checked
 // here — a value the parser rejects is a usage error and gets the flag list
-// with it — so 0 and -1 parse, and validateRanges rejects them a moment later
-// as the runtime errors they are (#17a).
+// with it — so 0 and -1 parse, and Cfg.validate rejects them a moment later as
+// the runtime errors they are (#17a).
 func parseWorkers(s string) (int, error) {
 	n, err := strconv.Atoi(s)
 	if err == nil {

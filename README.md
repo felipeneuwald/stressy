@@ -5,10 +5,10 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/felipeneuwald/stressy)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A CPU stress tool. It loads every CPU it is given with bcrypt hashing and
-reports the rate, so the same run on two nodes is a comparison.
+A CPU stress tool. It loads as many CPUs as you ask it for with bcrypt hashing
+and reports the rate, so the same run on two nodes is a comparison.
 
-`stress-ng` has 300 stressors; stressy has one and deploys anywhere — a 2.8 MB
+`stress-ng` has 300 stressors; stressy has one and deploys anywhere — a 2.1 MB
 static binary for eight OS/architecture targets, and a `FROM scratch` image
 with no base layer, no package manager, no shell and a non-root UID.
 
@@ -24,7 +24,7 @@ Or a [prebuilt binary](https://github.com/felipeneuwald/stressy/releases).
 ## Usage
 
 ```bash
-# Load every usable CPU until interrupted
+# One worker until interrupted
 stressy
 
 # Four workers for five minutes
@@ -37,9 +37,11 @@ stressy -t 1h30m
 stressy -t 30m -r 30s
 ```
 
-Every setting is a flag. stressy reads no environment variable, no config file
-and no positional argument, so a command line is the whole of what a run was
-given.
+Every setting is a flag, and none of them is inferred. `-w` defaults to `1`, so
+a bare `stressy` loads one CPU on a laptop, in a container and in a pod alike;
+to load the whole machine, say so with `stressy -w $(nproc)`. stressy reads no
+environment variable, no config file and no positional argument, so a command
+line is the whole of what a run was given.
 
 ### Output
 
@@ -84,16 +86,16 @@ Computed 2640 hashes in 2m0.093s (22.0 hashes/s, 4 workers)
 docker run --rm ghcr.io/felipeneuwald/stressy:latest -t 30s
 
 # Two CPUs' worth of load for five minutes
-docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 5m
+docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -w 2 -t 5m
 ```
 
 Both are bounded, deliberately: with no timeout, `docker run -d` leaves a
-container loading every CPU it can reach until somebody runs `docker stop`.
+container hashing until somebody runs `docker stop`.
 
-The worker count is read from the cgroup CPU quota, not the host's core count, so
-`--cpus 2` on a 16-core host starts 2 workers and `limits.cpu: "2"` in a pod spec
-starts 2 as well — `-w` is redundant there, and above the limit it buys
-throttling rather than load. The floor is 2, so `--cpus 1` starts 2.
+The worker count is `-w` and nothing else — no CPU quota is read, so `--cpus 2`
+without a `-w 2` loads one CPU and pays for two. Match `-w` to the limit: above
+it the extra workers buy throttling rather than load, below it the limit is
+partly idle.
 
 In Kubernetes a `Job` is the shape this fits: one pod, run to exit 0, recorded as
 finished — which makes `-t` and the [exit codes](#exit-codes) load-bearing, since
@@ -115,7 +117,8 @@ spec:
       containers:
         - name: stressy
           image: ghcr.io/felipeneuwald/stressy:latest
-          args: ["-t", "60s"]
+          # -w matches the cpu limit below; nothing derives one from the other.
+          args: ["-w", "2", "-t", "60s"]
           resources:
             limits:
               cpu: "2"
@@ -146,7 +149,7 @@ which is what `--report` is for. `:latest` only ever points at a full release.
 
 ### Available Flags
 
-- `-w, --workers`: Number of parallel workers (must be 1 or greater). Defaults to the number of CPUs this process can use — the host's core count, narrowed by the CPU affinity mask, by a cgroup CPU limit if there is one, and by the `GOMAXPROCS` environment variable if it is set. `stressy --help` prints the number for the machine you run it on
+- `-w, --workers`: Number of parallel workers (must be 1 or greater). `1`, the default, on every machine: nothing is read from the core count, the CPU affinity mask or a cgroup limit, so the number a run uses is the number you typed
 - `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. `0`, the default, runs until interrupted
 - `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does. `0`, the default, prints none, which is what a run has always done
 - `-h, --help`: Show help information

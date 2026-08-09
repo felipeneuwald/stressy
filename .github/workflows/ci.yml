@@ -45,8 +45,8 @@ jobs:
       - name: Lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 
-  # `go test` only ever ran on Linux, while signal delivery, timer behaviour and
-  # CPU detection — what a stress tool lives on — differ per platform (#66).
+  # `go test` only ever ran on Linux, while signal delivery and timer behaviour
+  # — what a stress tool lives on — differ per platform (#66).
   build:
     name: Build and test
     strategy:

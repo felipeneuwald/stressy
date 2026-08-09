@@ -21,7 +21,6 @@ const (
 	contributingPath  = "CONTRIBUTING.md"
 	securityPath      = "SECURITY.md"
 	releaseConfigPath = ".goreleaser.yaml"
-	ciWorkflowPath    = ".github/workflows/ci.yml"
 	// envPrefix is what the variables stressy read up to 0.5.0 all started with.
 	envPrefix = "STRESSY_"
 	// A reference starting with imageRepo is stressy's own, not somebody else's.

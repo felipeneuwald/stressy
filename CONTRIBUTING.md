@@ -36,13 +36,35 @@ the `//go:build unix` files stay out of the Windows build, since signalling your
 own process is not a thing there. A `govulncheck` scan and a `goreleaser` dry
 run are jobs of their own; neither needs a local equivalent.
 
+## Coverage
+
+`Coverage` is a job of its own too, and it reports rather than gates: it writes
+the figure and the per-function table to the run summary of every pull request,
+and after a merge to `main` it pushes the number the README's badge renders.
+Nothing fails under a threshold, so no change is blocked by the figure and no
+document has to state it — a percentage written into prose is #62, where
+`CHANGELOG.md` claimed 97.3% and the measurement said 97.6%.
+
+It runs on `ubuntu-latest` alone, because the `//go:build unix` files above are
+not in a Windows build and a Windows run therefore measures materially lower for
+a reason that is not a regression:
+
+```bash
+go test -race -coverpkg=./... -coverprofile=cover.out ./...
+go tool cover -func=cover.out
+```
+
+`-coverpkg=./...` is what makes that the merged figure rather than each
+package's own: `main_exit_test.go` is `package main` and drives
+`internal/stressy` through a re-execed `main()`, and without the flag none of
+that counts.
+
 ## Tests
 
 Test what an operator can observe: the flags, the messages, the exit behaviour.
-There is also a house rule:
-
-> A claim the documentation makes about something else in the repository gets a
-> test holding the two together.
+Nothing else — the tests that read `README.md`, `CONTRIBUTING.md`, `ci.yml` and
+`.goreleaser.yaml` as text are gone, so keeping a document true to the code it
+describes is a matter of reading both when you change either.
 
 ## Commits, branches and pull requests
 

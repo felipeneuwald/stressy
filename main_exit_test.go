@@ -16,6 +16,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -28,11 +29,26 @@ const (
 	childEnv     = "GO_STRESSY_EXIT_TEST"
 	childArgsEnv = "GO_STRESSY_EXIT_TEST_ARGS"
 
+	// readmePath is named in the failures below: the shapes checked here are
+	// the ones its sample sessions show.
+	readmePath = "README.md"
+
+	// stopHint and helpPointer bracket the line an indefinite run prints (#52).
+	stopHint    = "Press Ctrl+C or send SIGTERM to stop."
+	helpPointer = "Use --help for additional information"
+
 	// exitBudget bounds one child end to end. Generous on purpose: a `-t 2s`
 	// run still has to wait out the hash its worker is inside, which measures
 	// ~0.18s on an M-series core and ~1.9s on a loaded CI runner under -race —
 	// the same reason internal/stressy's stopBudget is 30s.
 	exitBudget = 60 * time.Second
+)
+
+var (
+	// summaryLine is the shape of the line a finished run prints (#49).
+	summaryLine = regexp.MustCompile(`^Computed (\d+) hash(?:es)? in \S+ \(\d+\.\d+ hashes/s, \d+ workers?\)$`)
+	// progressLine is the same for the --report heartbeat (#70).
+	progressLine = regexp.MustCompile(`^\S+ elapsed, (\d+) hash(?:es)?, \d+\.\d+ hashes/s$`)
 )
 
 // TestExitCodes covers #48: a signalled run exited 0, so an evicted pod read Complete.
@@ -220,7 +236,7 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 	return code, lines, errOut.String()
 }
 
-// checkSummary holds the line to the shape docs_test.go documents (#49).
+// checkSummary holds the line to the shape the README documents (#49).
 func checkSummary(t *testing.T, args string, stdout []string, wantHashes bool) {
 	t.Helper()
 

@@ -11,8 +11,9 @@ builds:
     flags:
       - -trimpath
     # `main.injected`, not `main.version`; a `-X` naming a variable that does
-    # not exist is dropped silently, so TestLdflagsVariableMatchesGoreleaser
-    # holds this line to main.go (#40).
+    # not exist is dropped silently rather than failing the link, and the
+    # binary then reports the build-info fallback. Renaming it here means
+    # renaming `var injected string` in main.go, and nothing checks that (#40).
     ldflags:
       - -s -w -X main.injected={{.Version}}
     # Artefact mtimes from the commit, not from when the job ran.
@@ -20,7 +21,6 @@ builds:
     # The whole cross product, no `ignore:` block: an undocumented
     # windows/arm64 exclusion left those users emulating amd64, which for a CPU
     # stress tool makes the numbers meaningless (#28).
-    # TestReleaseMatrixIsComplete fails if either list stops naming it all.
     goos:
       - linux
       - windows

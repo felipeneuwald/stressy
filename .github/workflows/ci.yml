@@ -80,6 +80,110 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+  # One platform, not the matrix above: main_exit_test.go and
+  # stressy_signal_test.go are `//go:build unix`, so a Windows run leaves them
+  # out of the build, cannot reach main() at all, and measures a materially
+  # lower figure for a reason that is not a regression (#108). ubuntu-latest is
+  # the run that compiles every file.
+  #
+  # A job rather than two flags on `build`, for the reason govulncheck is one:
+  # the matrix would measure the same thing three times and disagree, and a
+  # second `go test` run buys a signal that stands on its own.
+  #
+  # Report only: nothing here compares the number to anything, so what turns
+  # this job red is a failing test, not a figure. A threshold would trip on
+  # ordinary changes rather than on regressions — deleting a test moves this
+  # number as far as a regression does, and this repository deletes tests.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # For the badge push at the end, and scoped to this job rather than to the
+      # workflow, where it would reach the other four as well (#68).
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          check-latest: true
+
+      # -coverpkg=./... is what makes this the merged figure rather than each
+      # package's own: main_exit_test.go is `package main` and drives
+      # internal/stressy through a re-execed main(), which without the flag
+      # counts for nothing — 91.1% against 95.8%. The child's counters survive
+      # os.Exit, so nothing here needs `go build -cover` or a GOCOVERDIR.
+      # CONTRIBUTING.md publishes this command line, so a change here is a
+      # change there.
+      - name: Measure coverage
+        id: cover
+        run: |
+          set -euo pipefail
+
+          go test -race -coverpkg=./... -coverprofile=cover.out ./...
+
+          total=$(go tool cover -func=cover.out | awk '$1 == "total:" { print $NF }')
+
+          # Load-bearing: an empty total publishes a badge reading nothing and a
+          # summary claiming nothing, both of them green.
+          [ -n "$total" ] || { echo "::error::go tool cover printed no total line"; exit 1; }
+
+          echo "total=${total}" >>"$GITHUB_OUTPUT"
+
+          {
+            echo "## Coverage: ${total}"
+            echo
+            echo 'Statements, merged across every package, measured on ubuntu-latest.'
+            echo
+            echo '<details><summary><code>go tool cover -func</code></summary>'
+            echo
+            echo '```'
+            go tool cover -func=cover.out
+            echo '```'
+            echo
+            echo '</details>'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # The README badge's number, and the only thing the write grant is for.
+      # img.shields.io renders whatever this file says, so no percentage is
+      # written anywhere in the tree — which is what #62 was, CHANGELOG.md
+      # claiming 97.3% where the measurement said 97.6%.
+      #
+      # One orphan commit, force-pushed: the branch is a file's current value
+      # rather than a history, and a commit per merge would be noise in every
+      # `git log --all`. It is not main, so branch protection is not in the way,
+      # and this workflow's `push` trigger names main alone, so it cannot
+      # trigger itself. On a pull request the step is skipped rather than
+      # failed, which leaves the job green — goreleaser.yml's gate reads every
+      # job's conclusion, and a skipped job would stop a release (#68).
+      - name: Publish the coverage badge
+        if: github.ref == 'refs/heads/main'
+        env:
+          # README.md's badge URL names this branch and this file; renaming
+          # either here without renaming it there leaves the badge showing the
+          # last figure it was handed, for ever.
+          BADGE_BRANCH: badges
+          BADGE_FILE: coverage.json
+          TOTAL: ${{ steps.cover.outputs.total }}
+        run: |
+          set -euo pipefail
+
+          git switch --orphan "$BADGE_BRANCH"
+
+          # Blue, like the three shields badges beside it: the number is a
+          # report, and a colour scale is the threshold this deliberately lacks.
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s","color":"blue"}\n' "$TOTAL" >"$BADGE_FILE"
+
+          git add -- "$BADGE_FILE"
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "ci: coverage ${TOTAL} at ${GITHUB_SHA}"
+          git push --force origin "$BADGE_BRANCH"
+
   # Its own job so a formatting nit cannot cost the CVE signal, and because
   # `main`'s branch protection requires a check of this name.
   govulncheck:

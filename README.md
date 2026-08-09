@@ -1,6 +1,7 @@
 # stressy
 
 [![CI](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml/badge.svg)](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/felipeneuwald/stressy/badges/coverage.json)](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/felipeneuwald/stressy)](https://github.com/felipeneuwald/stressy/releases/latest)
 [![Go version](https://img.shields.io/github/go-mod/go-version/felipeneuwald/stressy)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

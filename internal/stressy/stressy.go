@@ -24,9 +24,9 @@ import (
 // which pegs a core no harder and leaves the cancellation check unreachable.
 const hashCost = 12
 
-// ShutdownSignals are the signals that end a run. Exported for
-// TestDocumentedExitCodes, which holds the README's exit code table against it.
-var ShutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+// shutdownSignals are the signals that end a run. README.md's exit-code table
+// documents what each one exits with; nothing holds the two together.
+var shutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 
 // SignalError is what Run returns when a signal ended the run rather than the
 // timer. It carries the signal because the exit code depends on which one fired.
@@ -34,7 +34,7 @@ var ShutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 // the run summary, so the caller turns this into an exit code rather than
 // printing it again.
 type SignalError struct {
-	// Signal is the signal that triggered the shutdown, one of ShutdownSignals.
+	// Signal is the signal that triggered the shutdown, one of shutdownSignals.
 	Signal os.Signal
 }
 
@@ -92,7 +92,7 @@ func (c Cfg) Run() error {
 	// is, either signal terminates the process outright and there is no shutdown
 	// to report. TestExitCodes relies on that ordering.
 	received := make(chan os.Signal, 1)
-	signal.Notify(received, ShutdownSignals...)
+	signal.Notify(received, shutdownSignals...)
 	defer signal.Stop(received)
 
 	writef(c.Out, "%s\n", c.startupMessage())

@@ -19,31 +19,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # SHA-pinned with the release in the trailing comment, which is what
-      # dependabot rewrites; a version tag is a pointer its owner can move.
-      # workflow_test.go fails on any external `uses:` that is not a SHA (#65).
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7
         with:
           # `stable`, not go-version-file: go.mod — see #13.
           go-version: stable
           check-latest: true
-          # golangci-lint's module graph needs a cache key of its own, and this
-          # file in the key invalidates it on the version bump below.
-          cache-dependency-path: |
-            go.sum
-            .github/workflows/ci.yml
+          # go.sum alone: with golangci-lint at @latest there is no version in
+          # this file for the key to track, so a lint release re-downloads its
+          # module graph rather than being served a cache that predates it.
+          cache-dependency-path: go.sum
 
       # Through the module proxy, so sum.golang.org verifies it (#67).
+      # @latest, like govulncheck below: a `go run` argument is invisible to
+      # both of dependabot's ecosystems, so a pinned version here is a pin
+      # nothing updates. The cost is that a lint release can turn main red on a
+      # day nobody changed any code, and on whoever pushes next.
       # Formatting first, or `run` fails on it with nothing actionable.
       - name: Check formatting
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 fmt --diff
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest fmt --diff
 
       - name: Lint
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   # `go test` only ever ran on Linux, while signal delivery and timer behaviour
   # — what a stress tool lives on — differ per platform (#66).
@@ -60,10 +60,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           check-latest: true
@@ -88,10 +88,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           check-latest: true
@@ -109,30 +109,30 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7
         with:
           # goreleaser increments the last tag, so a shallow clone gives it
           # nothing to work from. goreleaser.yml does the same.
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           check-latest: true
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@v4
         with:
           platforms: linux/amd64,linux/arm64
 
       # `check` first, so a malformed config fails in a second rather than
       # after eight cross-compiles. Its dockers_v2 warning still exits 0.
       - name: Check release config
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
           args: check
@@ -140,7 +140,7 @@ jobs:
       # --snapshot covers builds, archives, checksums and both images, but not
       # docker_manifests, the ghcr push or the release; an rcN tag reaches those.
       - name: Snapshot release
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
           args: release --snapshot --clean

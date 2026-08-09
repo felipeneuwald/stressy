@@ -16,12 +16,13 @@ updates:
           - patch
 
   # The `uses:` refs in .github/workflows/, and only those: a step's inputs —
-  # the inlined go-version, the goreleaser version, the @v2.12.2 — have no updater.
+  # the inlined go-version, the goreleaser `version:` — have no updater at all.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    # Grouped with majors included; a SHA pin has no other updater.
+    # Grouped, and majors are the point: the refs are major tags, which float
+    # through every minor, so a new major is all this updater has left to raise.
     groups:
       github-actions:
         patterns:

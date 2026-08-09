@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+const releaseWorkflowPath = ".github/workflows/goreleaser.yml"
+
 // TestReleaseMatrixIsComplete checks the targets a release builds against the
 // whole cross product it is meant to publish. An `ignore:` block dropped
 // windows/arm64 for the life of the project, and nothing failed (#28).
@@ -85,6 +87,27 @@ func TestLdflagsVariableMatchesGoreleaser(t *testing.T) {
 	}
 }
 
+// TestReleaseIsGatedOnGreenCI covers #68, both halves: an edge that disappears
+// publishes ungated, and a workflow-level write grant reaches the gate too.
+func TestReleaseIsGatedOnGreenCI(t *testing.T) {
+	src := lines(t, releaseWorkflowPath)
+
+	release := block(t, releaseWorkflowPath, src, "  goreleaser:", "    ")
+
+	if !slices.ContainsFunc(release, func(line string) bool {
+		return strings.TrimSpace(withoutComment(line)) == "needs: gate"
+	}) {
+		t.Errorf("%s: the goreleaser job has no `needs: gate`, so a `v*` tag publishes whatever CI made of the commit, including nothing at all (#68)", releaseWorkflowPath)
+	}
+
+	// The gate must not be able to publish; a workflow-level `write` lets it.
+	for i, line := range block(t, releaseWorkflowPath, src, "permissions:", " ") {
+		if strings.Contains(withoutComment(line), ": write") {
+			t.Errorf("%s:%d grants a write permission at the workflow level, where it reaches the gate as well; scope it to the goreleaser job (#68)", releaseWorkflowPath, i+1)
+		}
+	}
+}
+
 // lines reads a file in the repository root, which is where `go test` runs.
 func lines(t *testing.T, name string) []string {
 	t.Helper()
@@ -128,4 +151,33 @@ func yamlList(t *testing.T, name string, src []string, key string) []string {
 	t.Fatalf("%s has no `%s:` list, so the release builds nothing this test can check", name, key)
 
 	return nil
+}
+
+// block blanks out everything outside one indented block, so an index is still
+// a line number and a gate setting is never read as the release's.
+func block(t *testing.T, name string, src []string, key, indent string) []string {
+	t.Helper()
+
+	start := slices.Index(src, key)
+	if start < 0 {
+		t.Fatalf("%s has no `%s` block", name, key)
+	}
+
+	scoped := make([]string, len(src))
+
+	for i := start + 1; i < len(src); i++ {
+		code := withoutComment(src[i])
+
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(code, indent) {
+			break
+		}
+
+		scoped[i] = src[i]
+	}
+
+	return scoped
 }

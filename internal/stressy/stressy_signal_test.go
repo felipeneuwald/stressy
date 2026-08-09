@@ -7,6 +7,7 @@ package stressy
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -36,7 +37,7 @@ func TestRunStopsOnSignal(t *testing.T) {
 			defer signal.Stop(guard)
 
 			done := make(chan error, 1)
-			go func() { done <- Cfg{Workers: 1, Timeout: tt.timeout}.Run() }()
+			go func() { done <- Cfg{Workers: 1, Timeout: tt.timeout, Out: io.Discard}.Run() }()
 
 			// Run installs its handler asynchronously, so signal until it takes.
 			deadline := time.After(stopBudget)

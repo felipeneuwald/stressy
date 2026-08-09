@@ -9,7 +9,7 @@ A CPU stress tool. It loads every CPU it is given with bcrypt hashing and
 reports the rate, so the same run on two nodes is a comparison.
 
 `stress-ng` has 300 stressors; stressy has one and deploys anywhere — a 2.8 MB
-static binary for twelve OS/architecture targets, and a `FROM scratch` image
+static binary for eight OS/architecture targets, and a `FROM scratch` image
 with no base layer, no package manager, no shell and a non-root UID.
 
 ## Install
@@ -30,22 +30,16 @@ stressy
 # Four workers for five minutes
 stressy -w 4 -t 5m
 
-# Any Go duration; a bare number is seconds, so pre-0.4 command lines still work
+# Any Go duration
 stressy -t 1h30m
-stressy -t 60
 
 # A progress line every 30 seconds
 stressy -t 30m -r 30s
-
-# The same settings from the environment
-export STRESSY_WORKERS=4
-export STRESSY_TIMEOUT=5m
-stressy
 ```
 
-A flag given on the command line beats its environment variable, and an empty
-variable counts as unset — so `STRESSY_WORKERS=${WORKERS}` with `WORKERS`
-undefined leaves the default in place rather than failing the run.
+Every setting is a flag. stressy reads no environment variable, no config file
+and no positional argument, so a command line is the whole of what a run was
+given.
 
 ### Output
 
@@ -89,8 +83,8 @@ Computed 2640 hashes in 2m0.093s (22.0 hashes/s, 4 workers)
 # Bounded run: 30 seconds, then the container exits on its own
 docker run --rm ghcr.io/felipeneuwald/stressy:latest -t 30s
 
-# Two CPUs' worth of load for five minutes, configured by the environment
-docker run --rm --cpus 2 -e STRESSY_TIMEOUT=5m ghcr.io/felipeneuwald/stressy:latest
+# Two CPUs' worth of load for five minutes
+docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 5m
 ```
 
 Both are bounded, deliberately: with no timeout, `docker run -d` leaves a
@@ -153,8 +147,8 @@ which is what `--report` is for. `:latest` only ever points at a full release.
 ### Available Flags
 
 - `-w, --workers`: Number of parallel workers (must be 1 or greater). Defaults to the number of CPUs this process can use — the host's core count, narrowed by the CPU affinity mask, by a cgroup CPU limit if there is one, and by the `GOMAXPROCS` environment variable if it is set. `stressy --help` prints the number for the machine you run it on
-- `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. A bare number is read as seconds, so `-t 60` still means one minute. `0`, the default, runs until interrupted
-- `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does, a bare number included. `0`, the default, prints none, which is what a run has always done
+- `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. `0`, the default, runs until interrupted
+- `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does. `0`, the default, prints none, which is what a run has always done
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information
 

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Environment-variable configuration: `STRESSY_WORKERS`, `STRESSY_TIMEOUT` and `STRESSY_REPORT`.
+- A bare number as a duration: `-t 60` now has to be `-t 60s`.
+- NetBSD and OpenBSD release binaries.
 - cobra and pflag: one direct dependency left, and binaries 27% smaller.
 
 ## [0.5.0] - 2026-08-08

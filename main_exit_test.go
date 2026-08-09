@@ -137,13 +137,7 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 
 	child := exec.Command(os.Args[0], "-test.run=^TestExitCodesChild$")
 
-	// A developer with STRESSY_TIMEOUT exported would be testing something else.
-	for _, assignment := range os.Environ() {
-		if !strings.HasPrefix(assignment, "STRESSY_") {
-			child.Env = append(child.Env, assignment)
-		}
-	}
-	child.Env = append(child.Env, childEnv+"=1", childArgsEnv+"="+args)
+	child.Env = append(os.Environ(), childEnv+"=1", childArgsEnv+"="+args)
 
 	var errOut strings.Builder
 	child.Stderr = &errOut

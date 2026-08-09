@@ -1,4 +1,4 @@
-package cli
+package stressy
 
 import (
 	"errors"
@@ -8,12 +8,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
-
-	"github.com/felipeneuwald/stressy/internal/stressy"
 )
-
-// envPrefix prefixes the environment variables that configure stressy.
-const envPrefix = "STRESSY"
 
 // name is what stressy calls itself in the lines it prints about itself.
 const name = "stressy"
@@ -25,13 +20,9 @@ const useLine = "  " + name + " [flags]"
 // Description is what `stressy --help` prints above the usage block.
 // Duplicated from the README because in the FROM scratch image --help is the
 // only documentation that ships.
-// TestPrecedenceIsDocumentedWhereUsersRead holds it to the settings bindEnv fills.
 const Description = `Stressy is a simple tool to perform CPU stress tests.
 
-The --workers, --timeout and --report flags can each be set from the environment
-with the STRESSY_ prefix: STRESSY_WORKERS=4, STRESSY_TIMEOUT=5m or
-STRESSY_REPORT=30s. A flag given on the command line beats its environment
-variable, and an empty variable counts as unset.`
+Every setting is a flag; nothing is read from the environment.`
 
 // Examples is the block `stressy --help` prints under `Examples:`.
 // TestDocumentedInvocationsAreValid runs every line of this through the parser,
@@ -43,63 +34,27 @@ const Examples = `  # Load the machine until interrupted
   # Four workers for five minutes
   stressy -w 4 -t 5m
 
-  # A bare number is read as seconds, so pre-0.4 command lines keep working
-  stressy -t 60
-
-  # The same run, configured from the environment
-  STRESSY_WORKERS=4 STRESSY_TIMEOUT=5m stressy
-
   # A progress line every 30 seconds; without one a run prints nothing until it ends
   stressy -t 30m -r 30s
 
   # In a container the CPU limit sets the worker count
   docker run --rm --cpus 2 ghcr.io/felipeneuwald/stressy:latest -t 30s`
 
-// setting is one row of the flag table: how a flag registers, how the Flags
-// block prints it, and whether the environment may fill it. One table drives
-// registration and rendering both, which is what leaves `--help` unable to
-// disagree with the flags the binary actually has.
+// setting is one row of the flag table: how a flag registers and how the Flags
+// block prints it. One table drives registration and rendering both, which is
+// what leaves `--help` unable to disagree with the flags the binary actually has.
 type setting struct {
 	long        string
 	short       string
 	placeholder string // the type printed after the name; empty for a bool
 	usage       string
 	def         string // the default as of registration; empty where none prints
-	env         bool   // whether the environment may fill this setting
 	value       flag.Value
-}
-
-// Setting is one row of the flag table, as the documentation tests read it.
-type Setting struct {
-	Long, Short, Usage string
-	EnvVar             string // "" when the environment cannot fill this flag
-}
-
-// Settings returns the flag table. EnvVar is empty for --help and --version.
-//
-// This, and never the FlagSet, is what a test walking stressy's settings
-// iterates: every setting is registered twice, once under each spelling, so a
-// loop over the set sees `w` a second time and calls the shorthand a setting of
-// its own that nothing documents.
-func Settings() []Setting {
-	flags := newCmd(&stressy.Cfg{}).flags
-
-	settings := make([]Setting, 0, len(flags))
-	for _, s := range flags {
-		row := Setting{Long: s.long, Short: s.short, Usage: s.usage}
-		if s.env {
-			row.EnvVar = envName(envPrefix, s.long)
-		}
-
-		settings = append(settings, row)
-	}
-
-	return settings
 }
 
 // usageError is a command line the parser rejected: an unknown flag, a value it
 // could not read, an argument where only flags go. Everything past parsing —
-// a variable out of range, a run that failed — is not one.
+// a value out of range, a run that failed — is not one.
 //
 // The split of #17a is carried by this type rather than by a flag flipped
 // partway through the run, so what earns the flag list is a property of the
@@ -113,7 +68,7 @@ func (e *usageError) Unwrap() error { return e.err }
 // command is a stressy command line: the flag table, the set both spellings of
 // every flag are registered in, and the seam a test replaces.
 type command struct {
-	cfg   *stressy.Cfg
+	cfg   *Cfg
 	fs    *flag.FlagSet
 	flags []setting
 
@@ -123,17 +78,17 @@ type command struct {
 	// run is the stress test itself, replaced by a test that is about what a
 	// command line configures rather than about pegging a CPU for the length of
 	// one. stdout and stderr are the same seam for what the command prints.
-	run    func(*stressy.Cfg) error
+	run    func(*Cfg) error
 	stdout io.Writer
 	stderr io.Writer
 }
 
 // newCmd builds the stressy command with its flags registered against cfg.
-func newCmd(cfg *stressy.Cfg) *command {
+func newCmd(cfg *Cfg) *command {
 	c := &command{
 		cfg:    cfg,
 		fs:     flag.NewFlagSet(name, flag.ContinueOnError),
-		run:    func(cfg *stressy.Cfg) error { return cfg.Run() },
+		run:    func(cfg *Cfg) error { return cfg.Run() },
 		stdout: os.Stdout,
 		stderr: os.Stderr,
 	}
@@ -148,11 +103,11 @@ func newCmd(cfg *stressy.Cfg) *command {
 	// which names a Go standard library function at an operator. See workersValue.
 	workers := newWorkersValue(defaultWorkers(), &cfg.Workers)
 
-	// Var rather than DurationVar: the stock parser rejects the bare-seconds
-	// spelling this project has accepted since 0.1.0. See durationValue.
+	// Var rather than DurationVar for the same reason: the stock parser rejects
+	// a bad duration as a bare "parse error". See durationValue.
 	timeout := newDurationValue(0, &cfg.Timeout)
 
-	// The same durationValue as --timeout, so `--report 60` reads as seconds too.
+	// The same durationValue as --timeout, so both spell a duration alike.
 	// The usage text is ASCII, like every other string this program prints.
 	report := newDurationValue(0, &cfg.Report)
 
@@ -169,13 +124,13 @@ func newCmd(cfg *stressy.Cfg) *command {
 			value: newBoolValue(&c.wantHelp),
 		},
 		{
-			long: "report", short: "r", placeholder: report.Type(), def: report.String(), env: true,
-			usage: "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m; a bare number is seconds, and 0, the default, prints none",
+			long: "report", short: "r", placeholder: report.Type(), def: report.String(),
+			usage: "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m; 0, the default, prints none",
 			value: report,
 		},
 		{
-			long: "timeout", short: "t", placeholder: timeout.Type(), def: timeout.String(), env: true,
-			usage: "how long to run the stress test, as a duration such as 30s or 5m; a bare number is seconds, and 0 runs until interrupted",
+			long: "timeout", short: "t", placeholder: timeout.Type(), def: timeout.String(),
+			usage: "how long to run the stress test, as a duration such as 30s or 5m; 0, the default, runs until interrupted",
 			value: timeout,
 		},
 		{
@@ -183,7 +138,7 @@ func newCmd(cfg *stressy.Cfg) *command {
 			value: newBoolValue(&c.wantVersion),
 		},
 		{
-			long: "workers", short: "w", placeholder: workers.Type(), def: workers.String(), env: true,
+			long: "workers", short: "w", placeholder: workers.Type(), def: workers.String(),
 			usage: "number of parallel workers for CPU stress testing; the default is the number of CPUs this process can use",
 			value: workers,
 		},
@@ -212,14 +167,14 @@ func (c *command) execute(args []string) error {
 	// A signal-shortened run is reported by its exit code, not as an error: Run
 	// has already printed the shutdown line, and printing this would report the
 	// same shutdown twice.
-	if _, ok := errors.AsType[*stressy.SignalError](err); ok {
+	if _, ok := errors.AsType[*SignalError](err); ok {
 		return err
 	}
 
 	writef(c.stderr, "Error: %v\n", err)
 
-	// A mistyped flag wants the flag list; everything from bindEnv on is a
-	// rejected value or a failed run, which wants one line (#17a).
+	// A mistyped flag wants the flag list; a value out of range and a failed run
+	// want one line (#17a).
 	if _, ok := errors.AsType[*usageError](err); ok {
 		writef(c.stderr, "%s\n", c.usage())
 	}
@@ -252,23 +207,20 @@ func (c *command) dispatch(args []string) error {
 		return &usageError{fmt.Errorf("unexpected argument %q: stressy takes flags only", rest[0])}
 	}
 
-	// Flags not given on the command line are filled from the environment.
-	fromEnv, err := bindEnv(c.fs, c.flags, envPrefix)
-	if err != nil {
-		return err
-	}
-
-	// The last point at which the source of a value is known. See validateRanges.
-	if err := validateRanges(c.cfg, fromEnv); err != nil {
+	// A value the parser accepted can still be out of range. Deliberately not a
+	// usageError: the flag list answers nothing about `-w 0`, and #17a is that a
+	// runtime error prints one line. Run re-applies the same rules for callers
+	// that never come through this command.
+	if err := c.cfg.validate(); err != nil {
 		return err
 	}
 
 	return c.run(c.cfg)
 }
 
-// writef prints to one of the command's two streams and drops the error a
-// closed stdout would give back: there is nowhere left to report that with, and
-// no exit code this program has would be truer for it.
+// writef prints to one of the command's two streams, or to Cfg.Out, and drops
+// the error a closed stdout would give back: there is nowhere left to report
+// that with, and no exit code this program has would be truer for it.
 func writef(w io.Writer, format string, a ...any) {
 	_, _ = fmt.Fprintf(w, format, a...)
 }
@@ -333,13 +285,13 @@ func defaultWorkers() int {
 	return runtime.GOMAXPROCS(0)
 }
 
-// Parse resolves one command line into cfg the way a run does — flags, then the
-// environment, then the range checks — and starts no stress test. That is the
-// seam the documentation tests drive: they are about what a published
-// invocation configures, not about pegging a CPU for the length of one.
-func Parse(cfg *stressy.Cfg, args []string) error {
+// Parse resolves one command line into cfg the way a run does — the flags, then
+// the range checks — and starts no stress test. That is the seam the
+// documentation tests drive: they are about what a published invocation
+// configures, not about pegging a CPU for the length of one.
+func Parse(cfg *Cfg, args []string) error {
 	c := newCmd(cfg)
-	c.run = func(*stressy.Cfg) error { return nil }
+	c.run = func(*Cfg) error { return nil }
 	c.stdout, c.stderr = io.Discard, io.Discard
 
 	return c.execute(args)
@@ -351,7 +303,7 @@ func Parse(cfg *stressy.Cfg, args []string) error {
 func Main(injected string) int {
 	version = resolveVersion(injected, buildInfo())
 
-	err := newCmd(&stressy.Cfg{}).execute(os.Args[1:])
+	err := newCmd(&Cfg{}).execute(os.Args[1:])
 	if err == nil {
 		return 0
 	}
@@ -359,7 +311,7 @@ func Main(injected string) int {
 	// A run a signal cut short exits 128 plus the signal number, which is what
 	// makes a Kubernetes Job record an evicted pod as failed rather than
 	// Complete. execute has already silenced this one, so nothing printed it.
-	if sig, ok := errors.AsType[*stressy.SignalError](err); ok {
+	if sig, ok := errors.AsType[*SignalError](err); ok {
 		return sig.ExitCode()
 	}
 

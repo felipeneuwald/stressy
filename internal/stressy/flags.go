@@ -1,4 +1,4 @@
-package cli
+package stressy
 
 import (
 	"errors"
@@ -8,9 +8,10 @@ import (
 	"time"
 )
 
-// durationValue adapts time.Duration to the flag.Value interface. A bare number
-// has meant seconds since 0.1.0 and time.ParseDuration rejects exactly that
-// input, so this accepts both spellings and the two cannot collide.
+// durationValue adapts time.Duration to the flag.Value interface. Stock
+// DurationVar rejects everything time.ParseDuration does not take as a bare
+// "parse error", which tells an operator nothing about what a good value looks
+// like; named after the flag, because the message it produces names it.
 type durationValue time.Duration
 
 // newDurationValue writes the default through p, as flag's own DurationVar does.
@@ -20,10 +21,13 @@ func newDurationValue(val time.Duration, p *time.Duration) *durationValue {
 	return (*durationValue)(p)
 }
 
+// Set takes Go's duration syntax and nothing else. A bare count of seconds was
+// accepted from 0.1.0 to 0.5.0 and is now rejected, loudly: `-t 60` fails here
+// rather than quietly running for a length nobody typed.
 func (d *durationValue) Set(s string) error {
-	v, err := parseDuration(s)
+	v, err := time.ParseDuration(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid duration %q: want a duration such as 30s or 5m", s)
 	}
 
 	*d = durationValue(v)
@@ -36,29 +40,6 @@ func (d *durationValue) Set(s string) error {
 func (d *durationValue) Type() string { return "duration" }
 
 func (d *durationValue) String() string { return time.Duration(*d).String() }
-
-// parseDuration accepts both Go's duration syntax ("30s", "5m", "1h30m") and a
-// bare count of seconds ("300"), which is the pre-0.4 --timeout spelling.
-func parseDuration(s string) (time.Duration, error) {
-	if d, err := time.ParseDuration(s); err == nil {
-		return d, nil
-	}
-
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration %q: want a duration such as 30s or 5m, or a bare number of seconds", s)
-	}
-
-	// time.ParseDuration reports its own overflow; this multiplication is ours.
-	// Past ~292 years int64 nanoseconds wrap, and a wrapped value is negative or
-	// a plausible short duration — both silently run for the wrong length of time.
-	d := time.Duration(n) * time.Second
-	if d/time.Second != time.Duration(n) {
-		return 0, fmt.Errorf("invalid duration %q: %d seconds is out of range, the maximum is %d", s, n, math.MaxInt64/int64(time.Second))
-	}
-
-	return d, nil
-}
 
 // workersValue adapts the worker count to the flag.Value interface. Stock
 // IntVar reports `strconv.ParseInt: parsing "abc"` at an operator who may not

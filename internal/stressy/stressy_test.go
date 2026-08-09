@@ -1,12 +1,11 @@
 package stressy
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"regexp"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -45,20 +44,20 @@ func TestValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.cfg.Validate()
+			err := tt.cfg.validate()
 
 			if tt.wantErr == "" {
 				if err != nil {
-					t.Fatalf("Validate() error = %v, want nil", err)
+					t.Fatalf("validate() error = %v, want nil", err)
 				}
 				return
 			}
 
 			if err == nil {
-				t.Fatalf("Validate() error = nil, want %q", tt.wantErr)
+				t.Fatalf("validate() error = nil, want %q", tt.wantErr)
 			}
 			if err.Error() != tt.wantErr {
-				t.Errorf("Validate() error = %q, want %q", err, tt.wantErr)
+				t.Errorf("validate() error = %q, want %q", err, tt.wantErr)
 			}
 		})
 	}
@@ -117,7 +116,7 @@ func TestHintMessageNamesEverySignalARunStopsOn(t *testing.T) {
 
 	hint := Cfg{Workers: 1}.hintMessage()
 
-	for _, sig := range ShutdownSignals() {
+	for _, sig := range ShutdownSignals {
 		want, ok := spellings[sig]
 		if !ok {
 			t.Errorf("a run stops on %v, which this test knows no wording for; add it to spellings and to hintMessage", sig)
@@ -238,85 +237,11 @@ func TestSignalErrorExitCode(t *testing.T) {
 	}
 }
 
-// captureStdout returns everything f prints to os.Stdout.
-//
-// Run writes its lines with fmt.Println rather than through a writer it is
-// configured with, which is why this swaps the file out from under it. That is
-// a deliberate trade the rest of this package makes in the other direction:
-// every line a run prints is built by a function returning a string, so almost
-// nothing here needs a capture. What needs one is the wiring — which lines get
-// printed, in which order — and that is worth two tests rather than an io.Writer
-// threaded through the package's only exported entry point.
-//
-// The swap is safe because nothing in this package runs its tests in parallel,
-// and it is restored before the captured output is read.
-func captureStdout(t *testing.T, f func()) string {
-	t.Helper()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe() error = %v", err)
-	}
-
-	saved := os.Stdout
-	os.Stdout = w
-
-	// Drained in the background, or a run out-printing the pipe buffer blocks.
-	captured := make(chan string, 1)
-
-	go func() {
-		var buf strings.Builder
-
-		// Into the captured output rather than to t, which this may outlive.
-		if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-			fmt.Fprintf(&buf, "\nreading the captured output: %v", copyErr)
-		}
-
-		captured <- buf.String()
-	}()
-
-	f()
-
-	os.Stdout = saved
-
-	if err := w.Close(); err != nil {
-		t.Fatalf("closing the capture pipe: %v", err)
-	}
-
-	out := <-captured
-
-	if err := r.Close(); err != nil {
-		t.Fatalf("closing the capture pipe: %v", err)
-	}
-
-	return out
-}
-
 // unnumberedSignal is the only input ExitCode cannot map.
 type unnumberedSignal struct{}
 
 func (unnumberedSignal) String() string { return "unnumbered" }
 func (unnumberedSignal) Signal()        {}
-
-// TestShutdownSignals covers the list Run and TestDocumentedExitCodes both read.
-func TestShutdownSignals(t *testing.T) {
-	got := ShutdownSignals()
-
-	for _, want := range []os.Signal{syscall.SIGINT, syscall.SIGTERM} {
-		if !slices.Contains(got, want) {
-			t.Errorf("ShutdownSignals() = %v, want it to include %v", got, want)
-		}
-	}
-
-	// A copy: a caller sorting it would change which signals a run stops on.
-	if len(got) > 0 {
-		got[0] = nil
-
-		if ShutdownSignals()[0] == nil {
-			t.Error("ShutdownSignals() returns the package's own slice, want a copy")
-		}
-	}
-}
 
 // TestRunRejectsInvalidConfig covers Run's gate, which fails before any worker starts.
 func TestRunRejectsInvalidConfig(t *testing.T) {
@@ -424,7 +349,7 @@ func TestRunStopsAtTimeout(t *testing.T) {
 
 	start := time.Now()
 	done := make(chan error, 1)
-	go func() { done <- Cfg{Workers: 2, Timeout: timeout}.Run() }()
+	go func() { done <- Cfg{Workers: 2, Timeout: timeout, Out: io.Discard}.Run() }()
 
 	select {
 	case err := <-done:
@@ -443,12 +368,13 @@ func TestRunStopsAtTimeout(t *testing.T) {
 func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 	const timeout = 10 * time.Millisecond
 
-	out := captureStdout(t, func() {
-		if err := (Cfg{Workers: 1, Timeout: timeout}).Run(); err != nil {
-			t.Errorf("Run() error = %v, want nil", err)
-		}
-	})
+	var buf bytes.Buffer
 
+	if err := (Cfg{Workers: 1, Timeout: timeout, Out: &buf}).Run(); err != nil {
+		t.Errorf("Run() error = %v, want nil", err)
+	}
+
+	out := buf.String()
 	got := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 
 	if len(got) != 3 {
@@ -474,11 +400,13 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 		timeout = 2 * time.Second
 	)
 
-	out := captureStdout(t, func() {
-		if err := (Cfg{Workers: 1, Timeout: timeout, Report: report}).Run(); err != nil {
-			t.Errorf("Run() error = %v, want nil", err)
-		}
-	})
+	var buf bytes.Buffer
+
+	if err := (Cfg{Workers: 1, Timeout: timeout, Report: report, Out: &buf}).Run(); err != nil {
+		t.Errorf("Run() error = %v, want nil", err)
+	}
+
+	out := buf.String()
 
 	var (
 		progress  int
@@ -521,7 +449,7 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 
 // TestRunIsReusable covers #14's third item: a second call panicked on a channel.
 func TestRunIsReusable(t *testing.T) {
-	cfg := Cfg{Workers: 1, Timeout: time.Millisecond}
+	cfg := Cfg{Workers: 1, Timeout: time.Millisecond, Out: io.Discard}
 
 	for i := range 2 {
 		done := make(chan error, 1)

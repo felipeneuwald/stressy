@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/felipeneuwald/stressy/internal/cli"
+	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
 // injected is the version stamped into release binaries through `-ldflags "-X
@@ -12,4 +12,4 @@ import (
 // build time, so TestLdflagsVariableMatchesGoreleaser matches this line as text.
 var injected string
 
-func main() { os.Exit(cli.Main(injected)) }
+func main() { os.Exit(stressy.Main(injected)) }

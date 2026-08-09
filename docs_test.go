@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/felipeneuwald/stressy/internal/cli"
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
@@ -20,8 +19,11 @@ const (
 	readmePath = "README.md"
 	// CONTRIBUTING.md publishes an invocation of its own, `./stressy -w 2 -t 5s`.
 	contributingPath  = "CONTRIBUTING.md"
+	securityPath      = "SECURITY.md"
 	releaseConfigPath = ".goreleaser.yaml"
 	ciWorkflowPath    = ".github/workflows/ci.yml"
+	// envPrefix is what the variables stressy read up to 0.5.0 all started with.
+	envPrefix = "STRESSY_"
 	// A reference starting with imageRepo is stressy's own, not somebody else's.
 	imageRepo = "ghcr.io/felipeneuwald/stressy"
 	// stopHint and helpPointer bracket the line an indefinite run prints (#52).
@@ -76,7 +78,7 @@ func TestContainerExamplesAreBounded(t *testing.T) {
 		checked++
 		t.Run(inv.source, func(t *testing.T) {
 			if cfg := inv.run(t); cfg.Timeout == 0 {
-				t.Errorf("%s: `%s` runs until interrupted, which in a container leaves nothing to interrupt it; give the example a -t or a STRESSY_TIMEOUT (#27b)", inv.source, strings.Join(inv.args, " "))
+				t.Errorf("%s: `%s` runs until interrupted, which in a container leaves nothing to interrupt it; give the example a -t (#27b)", inv.source, strings.Join(inv.args, " "))
 			}
 		})
 	}
@@ -120,7 +122,7 @@ func TestDocumentedExitCodes(t *testing.T) {
 	}
 
 	signalled := make(map[int]bool)
-	for _, sig := range stressy.ShutdownSignals() {
+	for _, sig := range stressy.ShutdownSignals {
 		name, ok := readmeSignalNames[sig]
 		if !ok {
 			t.Errorf("stressy stops on %v, which this test knows no README name for; add it to readmeSignalNames", sig)
@@ -148,41 +150,30 @@ func TestDocumentedExitCodes(t *testing.T) {
 	}
 }
 
-// TestPrecedenceIsDocumentedWhereUsersRead is #47's live guard on `--help`.
+// TestNothingOffersEnvironmentConfiguration is what #47's guard became once the
+// binding it guarded was deleted. STRESSY_WORKERS, STRESSY_TIMEOUT and
+// STRESSY_REPORT configured a run up to 0.5.0 and configure nothing now, so a
+// document still naming one is inviting an operator to set a variable that will
+// be read by nobody — the failure #47 was about, arrived at from the other side.
 //
-// It walks cli.Settings() and never the flag set: every setting is registered
-// there twice, once under each spelling, so a loop over the set would report
-// each shorthand as a setting of its own that nothing documents.
-func TestPrecedenceIsDocumentedWhereUsersRead(t *testing.T) {
-	long := collapse(cli.Description)
+// `--help` is checked alongside the files because in the FROM scratch image it
+// is the only documentation that ships. CHANGELOG.md is not: recording the
+// removal is its job.
+func TestNothingOffersEnvironmentConfiguration(t *testing.T) {
+	docs := map[string]string{
+		readmePath:         strings.Join(lines(t, readmePath), "\n"),
+		contributingPath:   strings.Join(lines(t, contributingPath), "\n"),
+		securityPath:       strings.Join(lines(t, securityPath), "\n"),
+		"`stressy --help`": stressy.Description + "\n" + stressy.Examples,
+	}
 
-	for _, s := range cli.Settings() {
-		if s.EnvVar == "" {
-			// Offering a variable the binding refuses to read reads as an
-			// invitation to set it, which is worse than documenting nothing.
-			if variable := wouldBeEnvVar(s); strings.Contains(long, variable) {
-				t.Errorf("`stressy --help` offers %s, which bindEnv skips because --%s is not a setting a run is configured from (#47)", variable, s.Long)
+	for source, doc := range docs {
+		for i, line := range strings.Split(doc, "\n") {
+			if strings.Contains(line, envPrefix) {
+				t.Errorf("%s:%d offers %s, and stressy reads no environment variable at all; every setting is a flag", source, i+1, strings.TrimSpace(line))
 			}
-
-			continue
-		}
-
-		if !strings.Contains(long, "--"+s.Long) {
-			t.Errorf("`stressy --help` says which flags read the environment without naming --%s, which bindEnv fills from %s (#64)", s.Long, s.EnvVar)
 		}
 	}
-}
-
-// wouldBeEnvVar is the variable a setting would be filled from if it were
-// fillable at all. cli.Settings leaves EnvVar empty for --help and --version
-// precisely because nothing reads them, and the name an operator would guess is
-// still the one the documentation has to stay clear of.
-func wouldBeEnvVar(s cli.Setting) string {
-	if s.EnvVar != "" {
-		return s.EnvVar
-	}
-
-	return "STRESSY_" + strings.ToUpper(s.Long)
 }
 
 // TestShellLineStripsTrailingComments covers the truncation at `#`. Every fence
@@ -220,15 +211,16 @@ func TestShellLineStripsTrailingComments(t *testing.T) {
 	}
 }
 
-// run resolves the invocation through cli.Parse, which is the real parser, the
-// real environment binding and the real range checks with the stress test left
-// out: the run itself saturates the CPU and blocks until signalled, where these
-// cases are about what a documented command line configures.
+// run resolves the invocation through stressy.Parse, which is the real parser
+// and the real range checks with the stress test left out: the run itself
+// saturates the CPU and blocks until signalled, where these cases are about
+// what a documented command line configures.
 func (inv invocation) run(t *testing.T) stressy.Cfg {
 	t.Helper()
 
-	clearStressyEnv(t)
-
+	// Nothing stressy reads, since 1.0.0 — but a documented `FOO=bar stressy`
+	// or `docker run -e FOO=bar` is still applied rather than quietly dropped,
+	// so the line is parsed as what it says rather than half-read.
 	for _, assignment := range inv.env {
 		name, value, ok := strings.Cut(assignment, "=")
 		if !ok {
@@ -238,28 +230,11 @@ func (inv invocation) run(t *testing.T) stressy.Cfg {
 	}
 
 	var cfg stressy.Cfg
-	if err := cli.Parse(&cfg, inv.args); err != nil {
+	if err := stressy.Parse(&cfg, inv.args); err != nil {
 		t.Fatalf("%s: documented invocation `%s` = %v, want it to work as written", inv.source, strings.Join(append(slices.Clone(inv.env), append([]string{"stressy"}, inv.args...)...), " "), err)
 	}
 
 	return cfg
-}
-
-// clearStressyEnv blanks every variable a run can be configured from, so a case
-// reads the invocation in front of it rather than the one the shell running `go
-// test` happens to export (#58). The names come off the flag table, so a fourth
-// setting is covered the day it is registered; blank rather than unset, because
-// bindEnv treats an empty value as unset deliberately and t.Setenv restores what
-// was there afterwards. A documented value therefore has to be applied after
-// this returns — the environment is read at parse time, so that costs nothing.
-func clearStressyEnv(t *testing.T) {
-	t.Helper()
-
-	for _, s := range cli.Settings() {
-		if s.EnvVar != "" {
-			t.Setenv(s.EnvVar, "")
-		}
-	}
 }
 
 // documentedInvocations gathers every stressy run the project publishes.
@@ -333,7 +308,7 @@ func fileInvocations(t *testing.T, path string) []invocation {
 // exampleInvocations reads the Examples block `stressy --help` prints (#27c).
 func exampleInvocations(t *testing.T) []invocation {
 	t.Helper()
-	if strings.TrimSpace(cli.Examples) == "" {
+	if strings.TrimSpace(stressy.Examples) == "" {
 		t.Fatal("the command has no Examples block, so `stressy --help` shows no examples (#27c)")
 	}
 
@@ -341,7 +316,7 @@ func exampleInvocations(t *testing.T) []invocation {
 		found []invocation
 		sh    shell
 	)
-	for i, line := range strings.Split(cli.Examples, "\n") {
+	for i, line := range strings.Split(stressy.Examples, "\n") {
 		if inv, ok := sh.line(t, fmt.Sprintf("--help:%d", i+1), strings.TrimSpace(line)); ok {
 			found = append(found, inv)
 		}
@@ -425,11 +400,6 @@ func dockerRun(t *testing.T, source string, fields []string) (invocation, bool) 
 	return invocation{}, false
 }
 
-// collapse returns text as one line, so a sentence straddling a wrap matches.
-func collapse(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
-
 // flowList reads the `["-t", "60s"]` form the Job manifest uses for args.
 func flowList(t *testing.T, source, list string) []string {
 	t.Helper()
@@ -448,7 +418,7 @@ func flowList(t *testing.T, source, list string) []string {
 // documentedImages returns every image reference the README or `--help` names.
 func documentedImages(t *testing.T) []string {
 	t.Helper()
-	doc := strings.Join(lines(t, readmePath), "\n") + "\n" + cli.Examples
+	doc := strings.Join(lines(t, readmePath), "\n") + "\n" + stressy.Examples
 	found := imageRef.FindAllString(doc, -1)
 	if found == nil {
 		t.Fatalf("%s names no %s image, so there is nothing to check against %s", readmePath, imageRepo, releaseConfigPath)

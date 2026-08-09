@@ -1,4 +1,4 @@
-package cli
+package stressy
 
 import (
 	"runtime/debug"

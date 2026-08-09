@@ -1,12 +1,14 @@
-// Package stressy runs CPU stress tests with worker goroutines that hash bcrypt.
+// Package stressy is the stressy command: the flag grammar it publishes and the
+// CPU stress test that grammar configures, which worker goroutines run by
+// hashing bcrypt. The root main.go is a call into Main and nothing else.
 package stressy
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -22,14 +24,9 @@ import (
 // which pegs a core no harder and leaves the cancellation check unreachable.
 const hashCost = 12
 
-// shutdownSignals are the signals that end a run.
-var shutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
-
-// ShutdownSignals returns the signals a run stops on. Exported for
+// ShutdownSignals are the signals that end a run. Exported for
 // TestDocumentedExitCodes, which holds the README's exit code table against it.
-func ShutdownSignals() []os.Signal {
-	return slices.Clone(shutdownSignals)
-}
+var ShutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 
 // SignalError is what Run returns when a signal ended the run rather than the
 // timer. It carries the signal because the exit code depends on which one fired.
@@ -64,6 +61,10 @@ type Cfg struct {
 	Workers int           // number of parallel worker goroutines
 	Timeout time.Duration // how long to run (0 for indefinite)
 	Report  time.Duration // how often to print a progress line (0 for never)
+
+	// Out is where a run prints its four kinds of line. nil is os.Stdout, which
+	// is what the command leaves it as; a test reads a run through a buffer.
+	Out io.Writer
 }
 
 // Run starts the configured workers and blocks until the timeout expires or a
@@ -74,8 +75,14 @@ type Cfg struct {
 // It returns an error if the configuration is invalid, a *SignalError — not a
 // failure, an exit code — if a signal ended the run, and nil if the timer did.
 func (c Cfg) Run() error {
-	if _, err := c.Validate(); err != nil {
+	if err := c.validate(); err != nil {
 		return err
+	}
+
+	// Defaulted before the first line is printed, and on the copy this value
+	// receiver already holds, so waitForShutdown below prints to it too.
+	if c.Out == nil {
+		c.Out = os.Stdout
 	}
 
 	// Both shutdown triggers meet in one select — waitForShutdown's, below — over
@@ -85,13 +92,13 @@ func (c Cfg) Run() error {
 	// is, either signal terminates the process outright and there is no shutdown
 	// to report. TestExitCodes relies on that ordering.
 	received := make(chan os.Signal, 1)
-	signal.Notify(received, shutdownSignals...)
+	signal.Notify(received, ShutdownSignals...)
 	defer signal.Stop(received)
 
-	fmt.Println(c.startupMessage())
+	writef(c.Out, "%s\n", c.startupMessage())
 
 	if hint := c.hintMessage(); hint != "" {
-		fmt.Println(hint)
+		writef(c.Out, "%s\n", hint)
 	}
 
 	// Started before the deadline is set, so the elapsed time the summary
@@ -123,7 +130,7 @@ func (c Cfg) Run() error {
 
 	sig := c.waitForShutdown(ctx, received, &hashes, start)
 
-	fmt.Println(shutdownMessage(sig))
+	writef(c.Out, "%s\n", shutdownMessage(sig))
 
 	// Tells the workers to stop on the signal path; a no-op on the timer path,
 	// where ctx is already done.
@@ -131,7 +138,7 @@ func (c Cfg) Run() error {
 
 	wg.Wait()
 
-	fmt.Println(c.summaryMessage(hashes.Load(), time.Since(start)))
+	writef(c.Out, "%s\n", c.summaryMessage(hashes.Load(), time.Since(start)))
 
 	if sig != nil {
 		return &SignalError{Signal: sig}
@@ -169,7 +176,7 @@ func (c Cfg) waitForShutdown(ctx context.Context, received <-chan os.Signal, has
 			// carries the time it fired, printing the elapsed time the line would
 			// have had if the process were healthy — hiding exactly the pathology
 			// an operator turns this on to see.
-			fmt.Println(progressMessage(hashes.Load(), time.Since(start)))
+			writef(c.Out, "%s\n", progressMessage(hashes.Load(), time.Since(start)))
 		}
 	}
 }
@@ -256,27 +263,25 @@ func plural[T int | uint64](n T, one, many string) string {
 	return many
 }
 
-// Validate reports whether a run can be started with this configuration, and
-// names the setting that failed alongside the error. Timeout 0 is indefinite and
-// Report 0 is off; neither has an upper bound, because any interval is one the
-// operator asked for.
+// validate reports whether a run can be started with this configuration.
+// Timeout 0 is indefinite and Report 0 is off; neither has an upper bound,
+// because any interval is one the operator asked for.
 //
-// The setting name is what the command layer needs and this package cannot
-// recover: by the time Run holds a value, `-w 0`, STRESSY_WORKERS=0 and the
-// default are one int, so naming the variable that produced it has to happen
-// out there. Exported for that caller; Run applies the same rules for every
-// other one.
-func (c Cfg) Validate() (setting string, err error) {
+// dispatch calls it so a rejected configuration is reported before the first
+// worker starts; Run calls it again for a caller that never came through the
+// command. Both matter: Workers 0 starts no goroutines and idles forever, and
+// Report -1 panics inside time.NewTicker.
+func (c Cfg) validate() error {
 	switch {
 	case c.Workers < 1:
-		return "workers", fmt.Errorf("workers must be 1 or greater")
+		return fmt.Errorf("workers must be 1 or greater")
 	case c.Timeout < 0:
-		return "timeout", fmt.Errorf("timeout must be 0 (indefinite) or greater")
+		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
 	case c.Report < 0:
-		return "report", fmt.Errorf("report must be 0 (off) or greater")
+		return fmt.Errorf("report must be 0 (off) or greater")
 	}
 
-	return "", nil
+	return nil
 }
 
 // stressTestCPU computes bcrypt hashes at hashCost until ctx is cancelled,

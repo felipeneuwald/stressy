@@ -28,19 +28,22 @@ jobs:
           # `stable`, not go-version-file: go.mod — see #13.
           go-version: stable
           check-latest: true
-          # golangci-lint's module graph needs a cache key of its own, and this
-          # file in the key invalidates it on the version bump below.
-          cache-dependency-path: |
-            go.sum
-            .github/workflows/ci.yml
+          # go.sum alone: with golangci-lint at @latest there is no version in
+          # this file for the key to track, so a lint release re-downloads its
+          # module graph rather than being served a cache that predates it.
+          cache-dependency-path: go.sum
 
       # Through the module proxy, so sum.golang.org verifies it (#67).
+      # @latest, like govulncheck below: a `go run` argument is invisible to
+      # both of dependabot's ecosystems, so a pinned version here is a pin
+      # nothing updates. The cost is that a lint release can turn main red on a
+      # day nobody changed any code, and on whoever pushes next.
       # Formatting first, or `run` fails on it with nothing actionable.
       - name: Check formatting
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 fmt --diff
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest fmt --diff
 
       - name: Lint
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run ./...
 
   # `go test` only ever ran on Linux, while signal delivery and timer behaviour
   # — what a stress tool lives on — differ per platform (#66).

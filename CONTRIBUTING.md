@@ -27,9 +27,11 @@ go test -race ./...        # also the only thing compiling every package
 ```
 
 CI runs `golangci-lint` through
-`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`; run
-that exact version locally rather than the newest, or you may see findings CI
-will not. `Build and test` runs on `ubuntu-latest`, `macos-latest` and `windows-latest`;
+`go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`, so run
+the newest locally too. It follows that a lint release can turn `main` red on a
+day nobody changed any code, and that the failure lands on whoever pushes next
+rather than on whoever caused it; fix it or pin the version here, in that order.
+`Build and test` runs on `ubuntu-latest`, `macos-latest` and `windows-latest`;
 the `//go:build unix` files stay out of the Windows build, since signalling your
 own process is not a thing there. A `govulncheck` scan and a `goreleaser` dry
 run are jobs of their own; neither needs a local equivalent.

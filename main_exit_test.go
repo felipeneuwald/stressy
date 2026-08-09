@@ -79,9 +79,10 @@ func TestExitCodes(t *testing.T) {
 			wantCode:  130,
 			wantLines: []string{"Starting CPU stress test with 1 worker for 10m0s", "Received signal, shutting down...", "Computed "},
 		},
-		// Unchanged by #48: `-w 0` fails after PreRunE, `--bogus` before it.
+		// Unchanged by #48: `-w 0` fails the range check, `--bogus` the parser.
 		{name: "a configuration the command rejects", args: "-w 0", wantCode: 1, wantStderr: "workers must be 1 or greater"},
-		{name: "a flag the command does not have", args: "--bogus", wantCode: 1, wantStderr: "unknown flag: --bogus"},
+		// The flag package names the flag single-dashed, whichever way it was spelled.
+		{name: "a flag the command does not have", args: "--bogus", wantCode: 1, wantStderr: "flag provided but not defined: -bogus"},
 	}
 
 	for _, tt := range tests {
@@ -104,7 +105,7 @@ func TestExitCodes(t *testing.T) {
 			}
 
 			if tt.wantStderr == "" {
-				// Run printed the shutdown line; cobra would report it twice.
+				// Run printed the shutdown line; reporting it here makes two.
 				if strings.Contains(stderr, "Error:") {
 					t.Errorf("`stressy %s` printed %q on stderr, want the shutdown reported once (#48)", tt.args, stderr)
 				}

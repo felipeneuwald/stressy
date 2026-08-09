@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
+- A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
+
+### Removed
+
+- cobra and pflag: one direct dependency left, and binaries 27% smaller.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added

@@ -1,6 +1,6 @@
 # Contributing
 
-stressy is small on purpose: one command, three flags, three direct dependencies.
+stressy is small on purpose: one command, three flags, one direct dependency.
 
 ## Getting set up
 

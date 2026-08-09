@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
-
 	"github.com/felipeneuwald/stressy/internal/stressy"
 )
 
@@ -39,20 +37,19 @@ func TestOutOfRangeValueNamesItsSource(t *testing.T) {
 			}
 
 			var ran bool
-			cmd.RunE = func(*cobra.Command, []string) error { ran = true; return nil }
-			cmd.SetArgs(tt.args)
+			cmd.run = func(*stressy.Cfg) error { ran = true; return nil }
 
-			err := cmd.Execute()
+			err := cmd.execute(tt.args)
 			if err == nil {
-				t.Fatalf("Execute(%q) error = nil, want the value to be rejected", tt.args)
+				t.Fatalf("execute(%q) error = nil, want the value to be rejected", tt.args)
 			}
 
 			if err.Error() != tt.want {
-				t.Errorf("Execute(%q) error = %q, want %q", tt.args, err, tt.want)
+				t.Errorf("execute(%q) error = %q, want %q", tt.args, err, tt.want)
 			}
 
 			if ran {
-				t.Errorf("Execute(%q) started the run, want the configuration rejected first", tt.args)
+				t.Errorf("execute(%q) started the run, want the configuration rejected first", tt.args)
 			}
 		})
 	}
@@ -67,15 +64,13 @@ func TestOutOfRangeEnvironmentValueMatchesTheParseError(t *testing.T) {
 
 			t.Setenv("STRESSY_WORKERS", value)
 
-			cmd.SetArgs([]string{"-t", "100ms"})
-
-			err := cmd.Execute()
+			err := cmd.execute([]string{"-t", "100ms"})
 			if err == nil {
-				t.Fatalf("Execute() with STRESSY_WORKERS=%s error = nil, want it rejected", value)
+				t.Fatalf("execute() with STRESSY_WORKERS=%s error = nil, want it rejected", value)
 			}
 
 			if !strings.HasPrefix(err.Error(), "invalid STRESSY_WORKERS: ") {
-				t.Errorf("Execute() with STRESSY_WORKERS=%s error = %q, want it to open by naming the variable", value, err)
+				t.Errorf("execute() with STRESSY_WORKERS=%s error = %q, want it to open by naming the variable", value, err)
 			}
 		})
 	}

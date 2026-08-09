@@ -45,16 +45,16 @@ jobs:
       - name: Lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run ./...
 
-  # `go test` only ever ran on Linux, while signal delivery, timer behaviour and
-  # CPU detection — what a stress tool lives on — differ per platform (#66).
+  # `go test` only ever ran on Linux, while signal delivery and timer behaviour
+  # — what a stress tool lives on — differ per platform (#66).
   build:
     name: Build and test
     strategy:
       # Which platforms a regression reaches is the signal; do not cancel.
       fail-fast: false
       matrix:
-        # The three hosted runners a release ships binaries for; the BSDs have
-        # none, so the dry run's cross-compile stays their ceiling.
+        # The three hosted runners a release ships binaries for; FreeBSD has
+        # none, so the dry run's cross-compile stays its ceiling.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -130,7 +130,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       # `check` first, so a malformed config fails in a second rather than
-      # after twelve cross-compiles. Its dockers_v2 warning still exits 0.
+      # after eight cross-compiles. Its dockers_v2 warning still exits 0.
       - name: Check release config
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:

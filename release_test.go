@@ -27,7 +27,7 @@ func TestReleaseMatrixIsComplete(t *testing.T) {
 		key  string
 		want []string
 	}{
-		{key: "goos", want: []string{"linux", "windows", "darwin", "freebsd", "netbsd", "openbsd"}},
+		{key: "goos", want: []string{"linux", "windows", "darwin", "freebsd"}},
 		{key: "goarch", want: []string{"amd64", "arm64"}},
 	}
 

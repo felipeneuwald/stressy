@@ -1,4 +1,4 @@
-package cli
+package stressy
 
 import (
 	"flag"
@@ -51,13 +51,13 @@ func TestFlagValues(t *testing.T) {
 			register: func(fs *flag.FlagSet) {
 				fs.Var(newDurationValue(90*time.Second, &timeout), "timeout", "how long to run")
 			},
-			get:      func() string { return timeout.String() },
-			wantType: "duration",
-			wantDef:  "1m30s",
-			// The bare-seconds spelling has no workersValue counterpart.
-			accepted:      []acceptedValue{{set: "5m", want: "5m0s"}, {set: "300", want: "5m0s"}},
+			get:           func() string { return timeout.String() },
+			wantType:      "duration",
+			wantDef:       "1m30s",
+			accepted:      []acceptedValue{{set: "5m", want: "5m0s"}},
 			badValue:      "5 minutes",
-			wantFragments: []string{"timeout", "5 minutes"},
+			wantFragments: []string{"timeout", "5 minutes", "want a duration such as 30s or 5m"},
+			noStrconv:     true,
 		},
 	}
 

@@ -13,9 +13,9 @@ a release tag, and `:latest` tracks full releases only.
 
 ## What the attack surface actually is
 
-stressy takes three flags and three environment variables, hashes a seven-byte
-constant in a loop, and prints a handful of lines to stdout: no sockets, no
-config file, no untrusted input, nothing to disk. So the realistic surface is:
+stressy takes three flags, hashes a seven-byte constant in a loop, and prints a
+handful of lines to stdout: no sockets, no environment, no config file, no
+untrusted input, nothing to disk. So the realistic surface is:
 
 - **The dependency graph.** One direct dependency, `golang.org/x/crypto`, and no
   indirect ones. `govulncheck` runs in CI on every push to main and every pull

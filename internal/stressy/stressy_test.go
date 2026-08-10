@@ -164,6 +164,8 @@ func TestProgressMessage(t *testing.T) {
 }
 
 // TestShutdownMessage covers #57: printed in place, the two lines were swappable.
+// The two signalled cases are #111: they printed the same line while exiting 130
+// and 143, so a log could not say which shutdown it had recorded.
 func TestShutdownMessage(t *testing.T) {
 	tests := []struct {
 		name string
@@ -172,8 +174,10 @@ func TestShutdownMessage(t *testing.T) {
 		want string
 	}{
 		{name: "timer expired", want: "Timer expired, shutting down..."},
-		{name: "SIGINT", sig: syscall.SIGINT, want: "Received signal, shutting down..."},
-		{name: "SIGTERM", sig: syscall.SIGTERM, want: "Received signal, shutting down..."},
+		{name: "SIGINT", sig: syscall.SIGINT, want: "Received SIGINT, shutting down..."},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: "Received SIGTERM, shutting down..."},
+		// Unreachable from shutdownSignals; the alternative is an unnamed signal.
+		{name: "a signal with no spelling", sig: unnumberedSignal{}, want: "Received unnumbered, shutting down..."},
 	}
 
 	for _, tt := range tests {
@@ -182,6 +186,29 @@ func TestShutdownMessage(t *testing.T) {
 				t.Errorf("shutdownMessage(%v) = %q, want %q", tt.sig, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestShutdownMessageNamesEverySignalARunStopsOn holds the line to the signal
+// list: a signal added to shutdownSignals with no spelling in signalName would
+// print os.Signal.String()'s "terminated" where the exit-code table says SIGTERM.
+func TestShutdownMessageNamesEverySignalARunStopsOn(t *testing.T) {
+	spellings := map[os.Signal]string{
+		syscall.SIGINT:  "SIGINT",
+		syscall.SIGTERM: "SIGTERM",
+	}
+
+	for _, sig := range shutdownSignals {
+		want, ok := spellings[sig]
+		if !ok {
+			t.Errorf("a run stops on %v, which this test knows no spelling for; add it to spellings and to signalName", sig)
+
+			continue
+		}
+
+		if got := shutdownMessage(sig); got != "Received "+want+", shutting down..." {
+			t.Errorf("shutdownMessage(%v) = %q, want it to name the signal %q (#111)", sig, got, want)
+		}
 	}
 }
 
@@ -216,11 +243,13 @@ func TestSignalErrorExitCode(t *testing.T) {
 		name string
 		sig  os.Signal
 		want int
+		// wantMsg is the same spelling the shutdown line uses (#111).
+		wantMsg string
 	}{
-		{name: "SIGINT", sig: syscall.SIGINT, want: 130},
-		{name: "SIGTERM", sig: syscall.SIGTERM, want: 143},
+		{name: "SIGINT", sig: syscall.SIGINT, want: 130, wantMsg: "run interrupted by SIGINT"},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: 143, wantMsg: "run interrupted by SIGTERM"},
 		// Unreachable from shutdownSignals; the alternative is a panic (#14).
-		{name: "a signal with no number", sig: unnumberedSignal{}, want: 1},
+		{name: "a signal with no number", sig: unnumberedSignal{}, want: 1, wantMsg: "run interrupted by unnumbered"},
 	}
 
 	for _, tt := range tests {
@@ -230,8 +259,8 @@ func TestSignalErrorExitCode(t *testing.T) {
 			if got := err.ExitCode(); got != tt.want {
 				t.Errorf("ExitCode() = %d, want %d", got, tt.want)
 			}
-			if err.Error() == "" {
-				t.Error("Error() = \"\", want it to name the signal")
+			if got := err.Error(); got != tt.wantMsg {
+				t.Errorf("Error() = %q, want %q", got, tt.wantMsg)
 			}
 		})
 	}

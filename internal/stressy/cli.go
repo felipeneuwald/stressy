@@ -16,6 +16,16 @@ const name = "stressy"
 // no operands, so the whole of its grammar is its flags.
 const useLine = "  " + name + " [flags]"
 
+// helpWidth is the column the blocks usage renders are wrapped and written to
+// fit. Fixed rather than measured: asking the terminal how wide it is means
+// golang.org/x/term, a second direct dependency in a program that has one,
+// against a number no terminal is narrower than (#116).
+//
+// It governs those blocks and nothing else. The `Error:` line printed above them
+// runs as long as it needs to: it is one sentence, and a supervisor grepping
+// stderr wants it on one line rather than in three pieces.
+const helpWidth = 80
+
 // Description is what `stressy --help` prints above the usage block.
 // Duplicated from the README because in the FROM scratch image --help is the
 // only documentation that ships.
@@ -26,13 +36,17 @@ Every setting is a flag; nothing is read from the environment.`
 // Examples is the block `stressy --help` prints under `Examples:`. Nothing runs
 // these lines through the parser any more, so an example naming a flag that no
 // longer exists reaches the reader rather than a test.
+//
+// Written to fit helpWidth rather than wrapped to it: a wrapped command line is
+// one nobody can paste, and a comment that has to be re-flowed is one that was
+// too long to read (#116).
 const Examples = `  # One worker until interrupted
   stressy
 
   # Four workers for five minutes
   stressy -w 4 -t 5m
 
-  # A progress line every 30 seconds; without one a run prints nothing until it ends
+  # A progress line every 30 seconds; a run prints nothing without one
   stressy -t 30m -r 30s
 
   # In a container, as many workers as the limit pays for
@@ -185,7 +199,7 @@ func (c *command) execute(args []string) error {
 	// A mistyped flag wants the flag list; a value out of range and a failed run
 	// want one line (#17a).
 	if _, ok := errors.AsType[*usageError](err); ok {
-		writef(c.stderr, "%s\n", c.usage())
+		writef(c.stderr, "%s\n", c.usage(withoutExamples))
 	}
 
 	return err
@@ -199,7 +213,7 @@ func (c *command) dispatch(args []string) error {
 	}
 
 	if c.wantHelp {
-		writef(c.stdout, "%s\n\n%s", Description, c.usage())
+		writef(c.stdout, "%s\n\n%s", Description, c.usage(withExamples))
 
 		return nil
 	}
@@ -234,16 +248,32 @@ func writef(w io.Writer, format string, a ...any) {
 	_, _ = fmt.Fprintf(w, format, a...)
 }
 
+// The two blocks usage renders, named at the call site because `true` there
+// says nothing about what it selects.
+const (
+	withExamples    = true
+	withoutExamples = false
+)
+
 // usage is the block under `--help` and under an error the parser produced: how
-// stressy is invoked, the examples, and the flags. It ends in a newline, so the
-// error path adds one of its own and leaves a blank line at the bottom.
-func (c *command) usage() string {
+// stressy is invoked, the flags, and — for `--help` alone — the examples. It
+// ends in a newline, so the error path adds one of its own and leaves a blank
+// line at the bottom.
+//
+// A mistyped flag gets the table, which is the answer to what it could have
+// been, and not the four examples, which are for a first reading and put thirty
+// lines on stderr for one wrong character (#116).
+func (c *command) usage(examples bool) string {
 	var b strings.Builder
 
 	b.WriteString("Usage:\n")
 	b.WriteString(useLine)
-	b.WriteString("\n\nExamples:\n")
-	b.WriteString(Examples)
+
+	if examples {
+		b.WriteString("\n\nExamples:\n")
+		b.WriteString(Examples)
+	}
+
 	b.WriteString("\n\nFlags:\n")
 
 	c.writeFlags(&b)
@@ -251,10 +281,11 @@ func (c *command) usage() string {
 	return b.String()
 }
 
-// writeFlags renders one line per setting, every usage text starting at the
-// same column: three past the longest `  -x, --name PLACEHOLDER` prefix. No
-// wrapping, so the long --report line is emitted whole however narrow the
-// terminal is, and no sorting, because the table is already in help order.
+// writeFlags renders the flag table: one row per setting, every usage text
+// starting at the same column — three past the longest `  -x, --name
+// PLACEHOLDER` prefix — and wrapped to helpWidth, with each continuation line
+// indented to that column so a description reads as one paragraph. No sorting,
+// because the table is already in help order.
 func (c *command) writeFlags(b *strings.Builder) {
 	prefixes := make([]string, len(c.flags))
 
@@ -270,20 +301,67 @@ func (c *command) writeFlags(b *strings.Builder) {
 	}
 
 	for i, s := range c.flags {
-		b.WriteString(prefixes[i])
-		b.WriteString(strings.Repeat(" ", width-len(prefixes[i])))
-		b.WriteString(s.usage)
+		usage := s.usage
 
 		// --help and --version have no default worth printing; the other three
 		// print theirs even when it is the zero value, `(default 0s)` included.
+		// Wrapped with the description rather than after it, so a default at the
+		// end of a full line moves down instead of hanging past the margin.
 		if s.def != "" {
-			b.WriteString(" (default ")
-			b.WriteString(s.def)
-			b.WriteString(")")
+			usage += " (default " + s.def + ")"
 		}
 
-		b.WriteByte('\n')
+		for j, line := range wrapText(usage, helpWidth-width) {
+			pad := width
+
+			// The first line carries the flag itself and is padded from the end
+			// of it; every line under it is padded from the margin.
+			if j == 0 {
+				b.WriteString(prefixes[i])
+
+				pad -= len(prefixes[i])
+			}
+
+			b.WriteString(strings.Repeat(" ", pad))
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
 	}
+}
+
+// wrapText breaks text into lines of at most width columns, on the spaces it
+// already has. A word longer than width takes a line of its own rather than
+// being split: a flag spelling or a duration is worth more whole than wrapped.
+//
+// Bytes are counted rather than runes, which is the same number here: every
+// string stressy prints about itself is ASCII.
+func wrapText(text string, width int) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	// A table wider than the terminal is what a narrower one would print anyway,
+	// and a width below one would otherwise put every word on a line of its own.
+	if width < 1 {
+		return []string{strings.Join(words, " ")}
+	}
+
+	lines := []string{words[0]}
+
+	for _, word := range words[1:] {
+		last := len(lines) - 1
+
+		if len(lines[last])+1+len(word) <= width {
+			lines[last] += " " + word
+
+			continue
+		}
+
+		lines = append(lines, word)
+	}
+
+	return lines
 }
 
 // Parse resolves one command line into cfg the way a run does — the flags, then

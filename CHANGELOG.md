@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The shutdown line names the signal: `Received SIGTERM, shutting down...`.
 - `-r, --report` has to be `1s` or longer, and no longer than `--timeout`.
+- The help output wraps at 80 columns instead of running past the margin.
+- A rejected command line prints the flags without the examples block.
 - `--workers` defaults to 1 again, not the number of CPUs available.
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.

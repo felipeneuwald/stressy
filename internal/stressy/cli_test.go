@@ -68,7 +68,8 @@ func TestFlagRegistration(t *testing.T) {
 		{name: "workers", shorthand: "w", placeholder: "int", def: "1", wantUsage: []string{"parallel workers"}},
 		// An int-of-seconds description gives no reason to try a duration (#26).
 		{name: "timeout", shorthand: "t", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
-		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
+		// Both bounds are stated where a command line is typed from (#114, #115).
+		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m", "no shorter than 1s", "no longer than --timeout"}},
 	}
 
 	var cfg Cfg
@@ -263,7 +264,11 @@ func TestOutOfRangeValueIsRejected(t *testing.T) {
 	}{
 		{name: "workers", args: []string{"-w", "0"}, want: "workers must be 1 or greater"},
 		{name: "timeout", args: []string{"-w", "1", "-t", "-5s"}, want: "timeout must be 0 (indefinite) or greater"},
-		{name: "report", args: []string{"-w", "1", "-r", "-30s"}, want: "report must be 0 (off) or greater"},
+		{name: "report", args: []string{"-w", "1", "-r", "-30s"}, want: "report must be 0 (off) or 1s or greater"},
+		// #114: a run that formats rather than hashes is not one anybody asked for.
+		{name: "report under the floor", args: []string{"-w", "1", "-t", "1s", "-r", "1ns"}, want: "report must be 0 (off) or 1s or greater"},
+		// #115: a run whose ticker never fires, which is `-r 1s` mistyped.
+		{name: "report longer than the timeout", args: []string{"-w", "1", "-t", "3s", "-r", "1m"}, want: "report 1m0s is longer than timeout 3s, so no progress line would print"},
 	}
 
 	for _, tt := range tests {

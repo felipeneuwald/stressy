@@ -131,7 +131,10 @@ func newCmd(cfg *Cfg) *command {
 		},
 		{
 			long: "report", short: "r", placeholder: report.Type(), def: report.String(),
-			usage: "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m; 0, the default, prints none",
+			// Both bounds are named here because both reject a command line, and
+			// the only place an operator reads before typing one is this table.
+			usage: "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m, no shorter than " +
+				reportFloor.String() + " and, on a bounded run, no longer than --timeout; 0, the default, prints none",
 			value: report,
 		},
 		{

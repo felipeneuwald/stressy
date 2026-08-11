@@ -24,6 +24,13 @@ import (
 // which pegs a core no harder and leaves the cancellation check unreachable.
 const hashCost = 12
 
+// reportFloor is the shortest --report interval a run will start on. Below it a
+// run spends itself formatting rather than hashing: `-t 1s -r 1ns` puts hundreds
+// of thousands of lines and tens of megabytes on stdout for one second of work,
+// which in a container with log shipping attached is most of the cost of the run
+// and none of its purpose (#114).
+const reportFloor = time.Second
+
 // shutdownSignals are the signals that end a run. README.md's exit-code table
 // documents what each one exits with; nothing holds the two together. Adding one
 // means giving signalName a spelling for it, which a test does hold.
@@ -304,8 +311,11 @@ func plural[T int | uint64](n T, one, many string) string {
 }
 
 // validate reports whether a run can be started with this configuration.
-// Timeout 0 is indefinite and Report 0 is off; neither has an upper bound,
-// because any interval is one the operator asked for.
+// Timeout 0 is indefinite and Report 0 is off, and neither has an upper bound,
+// because any length is one the operator asked for. A report interval has both
+// bounds, because outside them it is not an interval anybody asked for: under
+// reportFloor it is the run (#114), and past the timeout it is a line that never
+// prints, which is the shape of `-r 1m` typed where `-r 1s` was meant (#115).
 //
 // dispatch calls it so a rejected configuration is reported before the first
 // worker starts; Run calls it again for a caller that never came through the
@@ -317,8 +327,14 @@ func (c Cfg) validate() error {
 		return fmt.Errorf("workers must be 1 or greater")
 	case c.Timeout < 0:
 		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
-	case c.Report < 0:
-		return fmt.Errorf("report must be 0 (off) or greater")
+	case c.Report < 0, c.Report > 0 && c.Report < reportFloor:
+		return fmt.Errorf("report must be 0 (off) or %s or greater", reportFloor)
+	// An indefinite run outlives every interval, so only a bounded one can be
+	// shorter than its own report. Equal is allowed and is the boundary: the
+	// deadline is what ends that run, and whether the one tick landing with it
+	// prints first is the runtime's to order.
+	case c.Timeout > 0 && c.Report > c.Timeout:
+		return fmt.Errorf("report %s is longer than timeout %s, so no progress line would print", c.Report, c.Timeout)
 	}
 
 	return nil

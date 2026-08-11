@@ -35,11 +35,20 @@ func TestValidate(t *testing.T) {
 		{name: "sub-second timeout", cfg: Cfg{Workers: 1, Timeout: 250 * time.Millisecond}},
 		{name: "reporting off", cfg: Cfg{Workers: 1, Timeout: 30 * time.Second, Report: 0}},
 		{name: "reporting on", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: 30 * time.Second}},
-		{name: "report longer than the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Hour}},
+		{name: "report at the floor", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: reportFloor}},
+		// The boundary #115 leaves open: one tick, landing on the deadline.
+		{name: "report as long as the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Second}},
+		// An indefinite run outlives every interval, so none is too long for it.
+		{name: "a long report on an indefinite run", cfg: Cfg{Workers: 1, Timeout: 0, Report: time.Hour}},
 		{name: "zero workers", cfg: Cfg{Workers: 0, Timeout: 0}, wantErr: "workers must be 1 or greater"},
 		{name: "negative workers", cfg: Cfg{Workers: -1, Timeout: 0}, wantErr: "workers must be 1 or greater"},
 		{name: "negative timeout", cfg: Cfg{Workers: 1, Timeout: -time.Second}, wantErr: "timeout must be 0 (indefinite) or greater"},
-		{name: "negative report", cfg: Cfg{Workers: 1, Report: -time.Second}, wantErr: "report must be 0 (off) or greater"},
+		{name: "negative report", cfg: Cfg{Workers: 1, Report: -time.Second}, wantErr: "report must be 0 (off) or 1s or greater"},
+		// #114: `-t 1s -r 1ns` put hundreds of thousands of lines on stdout.
+		{name: "report of a nanosecond", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Nanosecond}, wantErr: "report must be 0 (off) or 1s or greater"},
+		{name: "report just under the floor", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: reportFloor - time.Nanosecond}, wantErr: "report must be 0 (off) or 1s or greater"},
+		// #115: three lines and exit 0, which is what `-r 1s` mistyped looks like.
+		{name: "report longer than the run", cfg: Cfg{Workers: 1, Timeout: 3 * time.Second, Report: time.Minute}, wantErr: "report 1m0s is longer than timeout 3s, so no progress line would print"},
 	}
 
 	for _, tt := range tests {
@@ -424,9 +433,11 @@ func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 // TestRunPrintsProgressWhenAsked is #70's wiring: the ticker starts and repeats.
 func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	const (
-		report = 20 * time.Millisecond
-		// A hundred intervals against an assertion asking for two; 300ms did not.
-		timeout = 2 * time.Second
+		// The shortest interval a run accepts since #114, so this is also what
+		// holds the floor to a run that still reports at it.
+		report = reportFloor
+		// Four intervals against an assertion asking for two.
+		timeout = 4 * time.Second
 	)
 
 	var buf bytes.Buffer

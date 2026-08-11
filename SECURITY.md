@@ -20,7 +20,14 @@ untrusted input, nothing to disk. So the realistic surface is:
 - **The dependency graph.** One direct dependency, `golang.org/x/crypto`, and no
   indirect ones. `govulncheck` runs in CI on every push to main and every pull
   request, and dependabot checks weekly.
-- **The published images and binaries.** Verify a download against `checksums.txt`.
+- **The published images and binaries.** `checksums.txt` is written by the job
+  that builds the artefacts and published beside them, so it catches a download
+  that arrived corrupt or truncated — not one that was substituted, since the
+  hash and the file come from the same place. Nothing in the release path is
+  signed: no build provenance, no SBOM, no image signature. A release is worth
+  what this repository's workflow and GitHub's hosting of it are worth.
+  `go install`, or a clone and `go build`, is a different trust path: the module
+  proxy and `sum.golang.org` stand behind the source.
 - **The release pipeline itself.** `.goreleaser.yaml` and the `Dockerfile`
   decide what ships, so a change to either is security-relevant.
 

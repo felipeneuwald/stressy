@@ -69,6 +69,13 @@ Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
 Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
 cross-node benchmark: a node hashing 30% slower is a finding.
 
+That cost is 12, and it is fixed for the whole of 1.x. It is the unit every
+number above is quoted in, so a figure recorded today and a figure recorded a
+year from now are the same measurement; moving it would halve or double every
+published number, which makes it a major version bump and nothing less. It is
+not `bcrypt.MaxCost`, which is about 26 hours a hash: no harder on a core, and
+long enough that a worker would never notice the run had ended.
+
 Between those lines a run says nothing, so `-r, --report` fills the gap:
 
 ```console
@@ -86,6 +93,14 @@ and past the timeout the ticker never fires, which is what `-r 1s` mistyped as
 `-r 1m` looks like — three lines, exit 0 and nothing to correct it by. Both are
 rejected before any worker starts. A run with no `-t` outlives every interval,
 so it takes any: `stressy -r 5m` reports until you stop it.
+
+### The output is the interface
+
+There is no `--json`. The lines above are what a script reads, and their wording
+is stable for 1.x: rewording one is a breaking change and takes a major version
+bump. Two of them carry a rate, so a script after the figure for the whole run
+matches the summary — the line that starts with `Computed ` — rather than
+`hashes/s`, which every progress line carries too.
 
 ### Containers
 

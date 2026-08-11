@@ -86,14 +86,14 @@ func TestExitCodes(t *testing.T) {
 			args:      "-w 1",
 			sig:       syscall.SIGTERM,
 			wantCode:  143,
-			wantLines: []string{"Starting CPU stress test with 1 worker indefinitely", stopHint, "Received signal, shutting down...", "Computed "},
+			wantLines: []string{"Starting CPU stress test with 1 worker indefinitely", stopHint, "Received SIGTERM, shutting down...", "Computed "},
 		},
 		{
 			name:      "SIGINT",
 			args:      "-w 1 -t 10m",
 			sig:       syscall.SIGINT,
 			wantCode:  130,
-			wantLines: []string{"Starting CPU stress test with 1 worker for 10m0s", "Received signal, shutting down...", "Computed "},
+			wantLines: []string{"Starting CPU stress test with 1 worker for 10m0s", "Received SIGINT, shutting down...", "Computed "},
 		},
 		// Unchanged by #48: `-w 0` fails the range check, `--bogus` the parser.
 		{name: "a configuration the command rejects", args: "-w 0", wantCode: 1, wantStderr: "workers must be 1 or greater"},

@@ -62,7 +62,7 @@ $ stressy -w 4
 Starting CPU stress test with 4 workers indefinitely
 Press Ctrl+C or send SIGTERM to stop. Use --help for additional information
 ^C
-Received signal, shutting down...
+Received SIGINT, shutting down...
 Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
 ```
 
@@ -146,7 +146,9 @@ Those four `securityContext` fields are what the `restricted` Pod Security
 Standard requires, and the whole of it: `runAsUser` is not among them, because
 the image already runs as UID/GID `65532`. It is `FROM scratch`, so there is no
 shell to `kubectl exec` in with and stdout is the only view you have of a run —
-which is what `--report` is for. `:latest` only ever points at a full release.
+which is what `--report` is for, and why the shutdown line names the signal: an
+evicted pod logs `Received SIGTERM`, which is the `143` it goes on to exit with.
+`:latest` only ever points at a full release.
 
 ### Available Flags
 

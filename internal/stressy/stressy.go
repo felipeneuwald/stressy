@@ -25,7 +25,8 @@ import (
 const hashCost = 12
 
 // shutdownSignals are the signals that end a run. README.md's exit-code table
-// documents what each one exits with; nothing holds the two together.
+// documents what each one exits with; nothing holds the two together. Adding one
+// means giving signalName a spelling for it, which a test does hold.
 var shutdownSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 
 // SignalError is what Run returns when a signal ended the run rather than the
@@ -40,7 +41,7 @@ type SignalError struct {
 
 // Error implements error. Nothing prints it on the normal path.
 func (e *SignalError) Error() string {
-	return "run interrupted by " + e.Signal.String()
+	return "run interrupted by " + signalName(e.Signal)
 }
 
 // ExitCode is the status a run this signal ended should exit with: 128 plus the
@@ -220,12 +221,35 @@ func progressMessage(hashes uint64, elapsed time.Duration) string {
 // shutdownMessage says why the run is ending. sig is the signal that stopped it,
 // or nil where the timer expired — the same distinction the exit code is chosen
 // from further out.
+//
+// The signal is named rather than called "a signal", because otherwise the two
+// signalled shutdowns print the same line while exiting 130 and 143, and the log
+// is the whole of what an operator has: the image is FROM scratch, so there is no
+// shell to exec into and ask (#111).
 func shutdownMessage(sig os.Signal) string {
 	if sig == nil {
 		return "Timer expired, shutting down..."
 	}
 
-	return "Received signal, shutting down..."
+	return fmt.Sprintf("Received %s, shutting down...", signalName(sig))
+}
+
+// signalName is what stressy calls a signal in the lines it prints: "SIGTERM",
+// where os.Signal.String() would say "terminated". SIG* is the spelling
+// README.md's exit-code table uses, so the name in a log and the code the table
+// documents it under are one grep apart.
+//
+// Only shutdownSignals reach here from Run. Anything else falls back to String(),
+// which is a worse name but still a name.
+func signalName(sig os.Signal) string {
+	switch sig {
+	case syscall.SIGINT:
+		return "SIGINT"
+	case syscall.SIGTERM:
+		return "SIGTERM"
+	default:
+		return sig.String()
+	}
 }
 
 // summaryMessage is the line Run prints once every worker has drained: what the

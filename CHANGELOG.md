@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NetBSD and OpenBSD release binaries.
 - cobra and pflag: one direct dependency left, and binaries 27% smaller.
 
+### Fixed
+
+- A signal that beats the expiring timeout exits 130 or 143, never 0.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added

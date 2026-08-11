@@ -171,7 +171,23 @@ func (c Cfg) waitForShutdown(ctx context.Context, received <-chan os.Signal, has
 		case <-ctx.Done():
 			// Both of Run's cancel functions are deferred, so this branch means
 			// the deadline expired; nil is what tells the two shutdowns apart.
-			return nil
+			//
+			// A signal arriving in the same instant leaves both cases ready, and
+			// select picks between ready cases at random, so the deadline could
+			// win a run a signal had ended: `Timer expired` on stdout and exit 0
+			// where README.md's table says 143. Draining first is what makes that
+			// table true — a signal already in the channel ended this run (#117).
+			//
+			// A signal arriving after this returns, while Run waits out the hash
+			// each worker is inside, is dropped and the run still exits 0: by
+			// then it has served the whole timeout it was given, which is what
+			// the table says 0 is. That window is #122's.
+			select {
+			case sig := <-received:
+				return sig
+			default:
+				return nil
+			}
 		case <-tick:
 			// time.Since rather than the timestamp the tick carries: a late tick
 			// carries the time it fired, printing the elapsed time the line would

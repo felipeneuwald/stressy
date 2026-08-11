@@ -476,6 +476,52 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	}
 }
 
+// TestWaitForShutdownPrefersAPendingSignal is #117. A signal landing in the same
+// instant the deadline expires leaves both cases of the select ready, and Go
+// picks between ready cases at random — so a SIGTERM could be reported as
+// `Timer expired, shutting down...` and exit 0, where README.md's table says 143
+// with no clause on it. The window is microseconds wide in a real run; here both
+// are ready by construction.
+//
+// Called many times over, because one call proves nothing: the outer select is
+// still choosing at random, and a run without the drain returns the signal from
+// about half its calls anyway. Every call is decided by the drain, so a hundred
+// of them leave a missed regression at 2^-100 rather than at one coin toss.
+func TestWaitForShutdownPrefersAPendingSignal(t *testing.T) {
+	const calls = 100
+
+	tests := []struct {
+		name string
+		// pending is queued before the deadline is observed; nil queues none.
+		pending os.Signal
+		want    os.Signal
+	}{
+		{name: "a signal pending as the deadline expires", pending: syscall.SIGTERM, want: syscall.SIGTERM},
+		{name: "the deadline alone", want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := range calls {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				received := make(chan os.Signal, 1)
+				if tt.pending != nil {
+					received <- tt.pending
+				}
+
+				var hashes atomic.Uint64
+
+				got := Cfg{Workers: 1, Out: io.Discard}.waitForShutdown(ctx, received, &hashes, time.Now())
+				if got != tt.want {
+					t.Fatalf("waitForShutdown() = %v on call %d of %d, want %v: a run a signal ended must not be reported as one the timer ended (#117)", got, i+1, calls, tt.want)
+				}
+			}
+		})
+	}
+}
+
 // TestRunIsReusable covers #14's third item: a second call panicked on a channel.
 func TestRunIsReusable(t *testing.T) {
 	cfg := Cfg{Workers: 1, Timeout: time.Millisecond, Out: io.Discard}

@@ -48,9 +48,20 @@ archives:
     # Named rather than left to goreleaser's default set, which is these two
     # plus CHANGELOG.md and would drop the licence silently if it ever changed.
     # This is what carries MIT now that the release has no `extra_files:`.
+    #
+    # Their mtimes come from the commit, as `mod_timestamp` does for the binary
+    # above: a fresh checkout stamps both files with the time the job ran, and
+    # an mtime inside a tarball is part of its bytes, so without this every
+    # re-run of a tag publishes different archives and a different
+    # checksums.txt. `.CommitDate`, not the `.CommitTimestamp` used above:
+    # this field is parsed as RFC 3339 and the epoch form fails the build.
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info:
+          mtime: '{{ .CommitDate }}'
+      - src: README.md
+        info:
+          mtime: '{{ .CommitDate }}'
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_

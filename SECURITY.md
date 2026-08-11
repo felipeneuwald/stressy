@@ -25,7 +25,8 @@ untrusted input, nothing to disk. So the realistic surface is:
   that arrived corrupt or truncated — not one that was substituted, since the
   hash and the file come from the same place. Nothing in the release path is
   signed: no build provenance, no SBOM, no image signature. A release is worth
-  what this repository's workflow and GitHub's hosting of it are worth.
+  what this repository's workflow, the actions that workflow resolves when it
+  runs, and GitHub's hosting of the result are worth.
   `go install` is a different trust path: the module proxy serves the source and
   `sum.golang.org` records what it served. A clone and `go build` is not — the
   source still comes from GitHub, and `go.sum` covers the dependency rather than

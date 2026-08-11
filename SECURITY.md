@@ -26,8 +26,10 @@ untrusted input, nothing to disk. So the realistic surface is:
   hash and the file come from the same place. Nothing in the release path is
   signed: no build provenance, no SBOM, no image signature. A release is worth
   what this repository's workflow and GitHub's hosting of it are worth.
-  `go install`, or a clone and `go build`, is a different trust path: the module
-  proxy and `sum.golang.org` stand behind the source.
+  `go install` is a different trust path: the module proxy serves the source and
+  `sum.golang.org` records what it served. A clone and `go build` is not — the
+  source still comes from GitHub, and `go.sum` covers the dependency rather than
+  this repository.
 - **The release pipeline itself.** `.goreleaser.yaml` and the `Dockerfile`
   decide what ships, so a change to either is security-relevant.
 

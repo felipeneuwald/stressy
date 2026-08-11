@@ -26,7 +26,8 @@ unix target, `zip` for windows, each holding the binary, the licence and this
 README:
 
 ```bash
-tar -xzf stressy_Linux_x86_64.tar.gz
+# It extracts flat, so naming the binary keeps its LICENSE and README out of the way
+tar -xzf stressy_Linux_x86_64.tar.gz stressy
 ./stressy -t 5s
 ```
 

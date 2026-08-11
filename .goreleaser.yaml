@@ -40,7 +40,8 @@ archives:
   #
   # `formats`, not the `format` singular deprecated in goreleaser v2.6.
   - formats: [tar.gz]
-    # zip on Windows, which has no tar in the hands of the person downloading it.
+    # zip on Windows: Explorer expands one on a double-click and cannot expand a
+    # tar.gz, though Windows has shipped bsdtar as tar.exe since 10 1803.
     format_overrides:
       - goos: windows
         formats: [zip]

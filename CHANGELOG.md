@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The shutdown line names the signal: `Received SIGTERM, shutting down...`.
+- `-r, --report` has to be `1s` or longer, and no longer than `--timeout`.
+- The help output wraps at 80 columns instead of running past the margin.
+- A rejected command line prints the flags without the examples block.
 - `--workers` defaults to 1 again, not the number of CPUs available.
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
@@ -21,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A bare number as a duration: `-t 60` now has to be `-t 60s`.
 - NetBSD and OpenBSD release binaries.
 - cobra and pflag: one direct dependency left, and binaries 27% smaller.
+
+### Fixed
+
+- A signal that beats the expiring timeout exits 130 or 143, never 0.
 
 ## [0.5.0] - 2026-08-08
 

@@ -74,13 +74,18 @@ func TestExitCodes(t *testing.T) {
 			wantNoLines: []string{helpPointer},
 			wantHashes:  true,
 		},
+		// Three seconds against the 1s floor `--report` has had since #114, so
+		// two ticks fall inside the run.
 		{
 			name:         "a run that reports its progress",
-			args:         "-w 1 -t 2s --report 250ms",
-			wantLines:    []string{"Starting CPU stress test with 1 worker for 2s", "Timer expired, shutting down...", "Computed "},
+			args:         "-w 1 -t 3s --report 1s",
+			wantLines:    []string{"Starting CPU stress test with 1 worker for 3s", "Timer expired, shutting down...", "Computed "},
 			wantHashes:   true,
 			wantProgress: true,
 		},
+		// #114 and #115 end a run before it starts, and say which bound it missed.
+		{name: "a report interval under the floor", args: "-w 1 -t 3s -r 100ms", wantCode: 1, wantStderr: "report must be 0 (off) or 1s or greater"},
+		{name: "a report interval longer than the run", args: "-w 1 -t 3s -r 1m", wantCode: 1, wantStderr: "report 1m0s is longer than timeout 3s"},
 		{
 			name:      "an indefinite run says how to stop it",
 			args:      "-w 1",

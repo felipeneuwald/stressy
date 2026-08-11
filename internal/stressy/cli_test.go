@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // newTestCmd builds the real command with the stress test stubbed out and its
@@ -68,7 +70,8 @@ func TestFlagRegistration(t *testing.T) {
 		{name: "workers", shorthand: "w", placeholder: "int", def: "1", wantUsage: []string{"parallel workers"}},
 		// An int-of-seconds description gives no reason to try a duration (#26).
 		{name: "timeout", shorthand: "t", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
-		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m"}},
+		// Both bounds are stated where a command line is typed from (#114, #115).
+		{name: "report", shorthand: "r", placeholder: "duration", def: "0s", wantUsage: []string{"duration", "5m", "no shorter than 1s", "no longer than --timeout"}},
 	}
 
 	var cfg Cfg
@@ -263,7 +266,11 @@ func TestOutOfRangeValueIsRejected(t *testing.T) {
 	}{
 		{name: "workers", args: []string{"-w", "0"}, want: "workers must be 1 or greater"},
 		{name: "timeout", args: []string{"-w", "1", "-t", "-5s"}, want: "timeout must be 0 (indefinite) or greater"},
-		{name: "report", args: []string{"-w", "1", "-r", "-30s"}, want: "report must be 0 (off) or greater"},
+		{name: "report", args: []string{"-w", "1", "-r", "-30s"}, want: "report must be 0 (off) or 1s or greater"},
+		// #114: a run that formats rather than hashes is not one anybody asked for.
+		{name: "report under the floor", args: []string{"-w", "1", "-t", "1s", "-r", "1ns"}, want: "report must be 0 (off) or 1s or greater"},
+		// #115: a run whose ticker never fires, which is `-r 1s` mistyped.
+		{name: "report longer than the timeout", args: []string{"-w", "1", "-t", "3s", "-r", "1m"}, want: "report 1m0s is longer than timeout 3s, so no progress line would print"},
 	}
 
 	for _, tt := range tests {
@@ -446,10 +453,153 @@ func TestErrorsGoToStderr(t *testing.T) {
 		t.Errorf("execute() printed %q to stdout, want a rejected command line reported on stderr alone", out.String())
 	}
 
-	for _, fragment := range []string{"Error: ", "Usage:", "Examples:", "Flags:"} {
+	for _, fragment := range []string{"Error: ", "Usage:", "Flags:"} {
 		if !strings.Contains(errOut.String(), fragment) {
 			t.Errorf("execute() stderr =\n%s\nwant it to contain %q", errOut.String(), fragment)
 		}
+	}
+}
+
+// TestOnlyHelpPrintsTheExamples is the second half of #116: a usage error used
+// to print all four examples above the flag table — 24 lines for one wrong
+// character, and more than that now the table wraps. The table stays,
+// because it is the answer to what the flag could have been; the examples are
+// for a first reading of `--help`, which still has them.
+func TestOnlyHelpPrintsTheExamples(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantExamples bool
+	}{
+		{name: "help", args: []string{"--help"}, wantExamples: true},
+		{name: "an unknown flag", args: []string{"--bogus"}},
+		{name: "a value the parser rejects", args: []string{"-t", "not-a-number"}},
+		{name: "a positional argument", args: []string{"4"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg Cfg
+			cmd := newTestCmd(t, &cfg)
+
+			var out bytes.Buffer
+			cmd.stdout, cmd.stderr = &out, &out
+
+			_ = cmd.execute(tt.args)
+
+			if got := strings.Contains(out.String(), "Examples:"); got != tt.wantExamples {
+				t.Errorf("execute(%q) printed:\n%s\nwant the examples block printed = %t (#116)", tt.args, out.String(), tt.wantExamples)
+			}
+
+			// Whichever block it was, the flags are in it: that is what names
+			// the flag a mistyped one could have been.
+			if !strings.Contains(out.String(), "Flags:") {
+				t.Errorf("execute(%q) printed:\n%s\nwant the flag table in it", tt.args, out.String())
+			}
+		})
+	}
+}
+
+// TestHelpFitsEightyColumns is the first half of #116: three usage texts ran to
+// 175, 165 and 144 columns, each of which an 80-column terminal wrapped twice at
+// an arbitrary point and with no indent under it. 80 is hard-coded, because the
+// alternative is golang.org/x/term for the width and this program has one direct
+// dependency.
+func TestHelpFitsEightyColumns(t *testing.T) {
+	// The literal, not helpWidth: reading the width back off the code under test
+	// would leave this green at whatever width the two of them agreed on, and 80
+	// is the decision 1.0.0 freezes rather than an implementation detail.
+	const columns = 80
+
+	var cfg Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	screens := map[string]string{
+		"--help":        Description + "\n\n" + cmd.usage(withExamples),
+		"a usage error": cmd.usage(withoutExamples),
+	}
+
+	for name, screen := range screens {
+		t.Run(name, func(t *testing.T) {
+			for line := range strings.SplitSeq(strings.TrimSuffix(screen, "\n"), "\n") {
+				// Runes, not bytes: a column is what a terminal wraps on. The
+				// two are the same number here only because every string this
+				// program prints about itself is ASCII.
+				if n := utf8.RuneCountInString(line); n > columns {
+					t.Errorf("%s printed a %d-column line, want %d or fewer:\n%s", name, n, columns, line)
+				}
+			}
+		})
+	}
+}
+
+// TestFlagDescriptionsWrapUnderTheirColumn holds the shape of a wrapped row: a
+// description that runs past the margin continues under itself rather than under
+// the flag, which is what the terminal's own wrapping could not do.
+func TestFlagDescriptionsWrapUnderTheirColumn(t *testing.T) {
+	var cfg Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	var b strings.Builder
+
+	cmd.writeFlags(&b)
+
+	lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+
+	// The column the first row's description starts at, read off the render
+	// rather than recomputed from the table, which would only restate the code.
+	column := strings.Index(lines[0], "help for")
+	if column < 0 {
+		t.Fatalf("the flag table opens with %q, want the --help row", lines[0])
+	}
+
+	var wrapped int
+
+	for _, line := range lines {
+		// A row of its own starts with the two-space indent and a shorthand.
+		if strings.HasPrefix(line, "  -") {
+			continue
+		}
+
+		wrapped++
+
+		if got := len(line) - len(strings.TrimLeft(line, " ")); got != column {
+			t.Errorf("a continuation line starts at column %d, want the description column %d:\n%s", got, column, line)
+		}
+	}
+
+	// A table nothing wraps would leave the assertion above running on nothing.
+	if wrapped == 0 {
+		t.Errorf("the flag table wrapped no line, so this test asserts nothing:\n%s", b.String())
+	}
+}
+
+// TestWrapText covers the breaking itself, which the table above exercises only
+// at the widths its own strings happen to have.
+func TestWrapText(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		width int
+		want  []string
+	}{
+		{name: "a text shorter than the width", text: "one two", width: 20, want: []string{"one two"}},
+		{name: "a text broken on its spaces", text: "one two three four", width: 9, want: []string{"one two", "three", "four"}},
+		{name: "a line filled exactly", text: "one two three", width: 7, want: []string{"one two", "three"}},
+		// A flag spelling or a ghcr.io reference is worth more whole than split.
+		{name: "a word longer than the width", text: "a --report=1000000000ns b", width: 5, want: []string{"a", "--report=1000000000ns", "b"}},
+		{name: "no text at all", text: "", width: 10, want: []string{""}},
+		{name: "a width nothing fits in", text: "one two", width: 0, want: []string{"one two"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapText(tt.text, tt.width)
+
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("wrapText(%q, %d) = %q, want %q", tt.text, tt.width, got, tt.want)
+			}
+		})
 	}
 }
 

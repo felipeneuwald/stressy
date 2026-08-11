@@ -35,11 +35,20 @@ func TestValidate(t *testing.T) {
 		{name: "sub-second timeout", cfg: Cfg{Workers: 1, Timeout: 250 * time.Millisecond}},
 		{name: "reporting off", cfg: Cfg{Workers: 1, Timeout: 30 * time.Second, Report: 0}},
 		{name: "reporting on", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: 30 * time.Second}},
-		{name: "report longer than the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Hour}},
+		{name: "report at the floor", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: reportFloor}},
+		// The boundary #115 leaves open: one tick, landing on the deadline.
+		{name: "report as long as the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Second}},
+		// An indefinite run outlives every interval, so none is too long for it.
+		{name: "a long report on an indefinite run", cfg: Cfg{Workers: 1, Timeout: 0, Report: time.Hour}},
 		{name: "zero workers", cfg: Cfg{Workers: 0, Timeout: 0}, wantErr: "workers must be 1 or greater"},
 		{name: "negative workers", cfg: Cfg{Workers: -1, Timeout: 0}, wantErr: "workers must be 1 or greater"},
 		{name: "negative timeout", cfg: Cfg{Workers: 1, Timeout: -time.Second}, wantErr: "timeout must be 0 (indefinite) or greater"},
-		{name: "negative report", cfg: Cfg{Workers: 1, Report: -time.Second}, wantErr: "report must be 0 (off) or greater"},
+		{name: "negative report", cfg: Cfg{Workers: 1, Report: -time.Second}, wantErr: "report must be 0 (off) or 1s or greater"},
+		// #114: `-t 1s -r 1ns` put hundreds of thousands of lines on stdout.
+		{name: "report of a nanosecond", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Nanosecond}, wantErr: "report must be 0 (off) or 1s or greater"},
+		{name: "report just under the floor", cfg: Cfg{Workers: 1, Timeout: time.Minute, Report: reportFloor - time.Nanosecond}, wantErr: "report must be 0 (off) or 1s or greater"},
+		// #115: three lines and exit 0, which is what `-r 1s` mistyped looks like.
+		{name: "report longer than the run", cfg: Cfg{Workers: 1, Timeout: 3 * time.Second, Report: time.Minute}, wantErr: "report 1m0s is longer than timeout 3s, so no progress line would print"},
 	}
 
 	for _, tt := range tests {
@@ -424,9 +433,11 @@ func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 // TestRunPrintsProgressWhenAsked is #70's wiring: the ticker starts and repeats.
 func TestRunPrintsProgressWhenAsked(t *testing.T) {
 	const (
-		report = 20 * time.Millisecond
-		// A hundred intervals against an assertion asking for two; 300ms did not.
-		timeout = 2 * time.Second
+		// The shortest interval a run accepts since #114, so this is also what
+		// holds the floor to a run that still reports at it.
+		report = reportFloor
+		// Four intervals against an assertion asking for two.
+		timeout = 4 * time.Second
 	)
 
 	var buf bytes.Buffer
@@ -473,6 +484,52 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 
 	if firstTick < startup || lastTick > shutdown {
 		t.Errorf("Run() printed:\n%s\nwant every progress line between the startup line and the shutdown line (#70)", out)
+	}
+}
+
+// TestWaitForShutdownPrefersAPendingSignal is #117. A signal landing in the same
+// instant the deadline expires leaves both cases of the select ready, and Go
+// picks between ready cases at random — so a SIGTERM could be reported as
+// `Timer expired, shutting down...` and exit 0, where README.md's table says 143
+// with no clause on it. The window is microseconds wide in a real run; here both
+// are ready by construction.
+//
+// Called many times over, because one call proves nothing: the outer select is
+// still choosing at random, and a run without the drain returns the signal from
+// about half its calls anyway. Every call is decided by the drain, so a hundred
+// of them leave a missed regression at 2^-100 rather than at one coin toss.
+func TestWaitForShutdownPrefersAPendingSignal(t *testing.T) {
+	const calls = 100
+
+	tests := []struct {
+		name string
+		// pending is queued before the deadline is observed; nil queues none.
+		pending os.Signal
+		want    os.Signal
+	}{
+		{name: "a signal pending as the deadline expires", pending: syscall.SIGTERM, want: syscall.SIGTERM},
+		{name: "the deadline alone", want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := range calls {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				received := make(chan os.Signal, 1)
+				if tt.pending != nil {
+					received <- tt.pending
+				}
+
+				var hashes atomic.Uint64
+
+				got := Cfg{Workers: 1, Out: io.Discard}.waitForShutdown(ctx, received, &hashes, time.Now())
+				if got != tt.want {
+					t.Fatalf("waitForShutdown() = %v on call %d of %d, want %v: a run a signal ended must not be reported as one the timer ended (#117)", got, i+1, calls, tt.want)
+				}
+			}
+		})
 	}
 }
 

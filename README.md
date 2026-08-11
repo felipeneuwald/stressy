@@ -69,6 +69,13 @@ Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
 Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
 cross-node benchmark: a node hashing 30% slower is a finding.
 
+That cost is 12, and it is fixed for the whole of 1.x. It is the unit every
+number above is quoted in, so a figure recorded today and a figure recorded a
+year from now are the same measurement; moving it would halve or double every
+published number, which makes it a major version bump and nothing less. It is
+not `bcrypt.MaxCost`, which is about 26 hours a hash: no harder on a core, and
+long enough that a worker would never notice the run had ended.
+
 Between those lines a run says nothing, so `-r, --report` fills the gap:
 
 ```console
@@ -79,6 +86,21 @@ Starting CPU stress test with 4 workers for 2m0s
 Timer expired, shutting down...
 Computed 2640 hashes in 2m0.093s (22.0 hashes/s, 4 workers)
 ```
+
+The interval has to be `1s` or longer, and no longer than `--timeout` where
+there is one: below a second a run spends itself formatting rather than hashing,
+and past the timeout the ticker never fires, which is what `-r 1s` mistyped as
+`-r 1m` looks like — three lines, exit 0 and nothing to correct it by. Both are
+rejected before any worker starts. A run with no `-t` outlives every interval,
+so it takes any: `stressy -r 5m` reports until you stop it.
+
+### The output is the interface
+
+There is no `--json`. The lines above are what a script reads, and their wording
+is stable for 1.x: rewording one is a breaking change and takes a major version
+bump. Two of them carry a rate, so a script after the figure for the whole run
+matches the summary — the line that starts with `Computed ` — rather than
+`hashes/s`, which every progress line carries too.
 
 ### Containers
 
@@ -154,7 +176,7 @@ evicted pod logs `Received SIGTERM`, which is the `143` it goes on to exit with.
 
 - `-w, --workers`: Number of parallel workers (must be 1 or greater). `1`, the default, on every machine: nothing is read from the core count, the CPU affinity mask or a cgroup limit, so the number a run uses is the number you typed
 - `-t, --timeout`: How long to run, as a duration such as `30s`, `5m` or `1h30m`. `0`, the default, runs until interrupted
-- `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does. `0`, the default, prints none, which is what a run has always done
+- `-r, --report`: Print a progress line this often — elapsed time, hashes computed and rate. Takes the same duration spellings `--timeout` does, no shorter than `1s` and, on a bounded run, no longer than `--timeout`. `0`, the default, prints none, which is what a run has always done
 - `-h, --help`: Show help information
 - `-v, --version`: Show version information
 
@@ -163,7 +185,7 @@ evicted pod logs `Received SIGTERM`, which is the `143` it goes on to exit with.
 | Code | Meaning |
 | --- | --- |
 | `0` | The run served the whole `--timeout` it was given |
-| `1` | The configuration was rejected — an unknown flag, an unparseable value, an unexpected argument — and no work was done |
+| `1` | The configuration was rejected — an unknown flag, an unparseable or out-of-range value, an unexpected argument — and no work was done |
 | `130` | SIGINT cut the run short, which is 128 + 2 and what Ctrl-C sends |
 | `143` | SIGTERM cut the run short, which is 128 + 15 and what `docker stop`, a `kubectl delete pod` and a node drain send |
 

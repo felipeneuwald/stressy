@@ -429,7 +429,8 @@ func TestUsageIsSilencedOnlyForRuntimeErrors(t *testing.T) {
 			}
 
 			// And the type it is selected by, which is the whole of the split now.
-			if _, isUsage := errors.AsType[*usageError](err); isUsage == tt.wantSilence {
+			var usageErr *usageError
+			if isUsage := errors.As(err, &usageErr); isUsage == tt.wantSilence {
 				t.Errorf("execute(%q) error = %q is a usage error = %t, want %t", tt.args, err, isUsage, wantUsage)
 			}
 		})

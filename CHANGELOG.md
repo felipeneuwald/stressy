@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
 - `--help` and the image description call stressy a lightweight CPU stress test tool.
+- Building stressy needs Go 1.25 or newer, down from 1.26.
 
 ### Removed
 

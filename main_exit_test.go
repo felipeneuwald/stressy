@@ -226,8 +226,8 @@ func runChild(t *testing.T, args string, sig syscall.Signal) (code int, stdout [
 	}
 
 	if err := child.Wait(); err != nil {
-		exitErr, ok := errors.AsType[*exec.ExitError](err)
-		if !ok {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
 			t.Fatalf("Wait() error = %v, want the child's exit status", err)
 		}
 

@@ -91,9 +91,11 @@ CI, comments, internal layout or documentation can see gets no entry at all.
 1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading,
    and check that what it claims is what ships.
 2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` gates on CI
-   — every run of `ci.yml` on the tagged commit must have completed successfully
-   — then builds the eight binaries, both images and the multi-arch manifest.
-   If the gate stops a tag, fix what is red and re-run the workflow.
+   — every run of `ci.yml` that the tagged commit got from a push to `main` must
+   have completed successfully, and there has to be one, so a tag on a branch
+   that was never merged is refused — then builds the eight archives, both
+   images and the multi-arch manifest. If the gate stops a tag, fix what is red
+   and re-run the workflow.
 3. To rehearse the publishing half, tag a `vX.Y.Z-rcN` pre-release first:
    `prerelease: auto` and the `{{ if not .Prerelease }}` guards keep it off
    `:latest` and off GitHub's "Latest release".

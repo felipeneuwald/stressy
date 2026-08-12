@@ -34,11 +34,18 @@ jobs:
           set -euo pipefail
 
           # ci.yml's runs, not the commit's check runs, which include this one.
+          #
+          # Push runs on main and nothing else: a pull-request run carries the
+          # PR head as its head_sha, so an unfiltered query lets a tag on a
+          # branch nobody reviewed or merged publish from it (#119). It also
+          # keeps a pull-request run that shares the SHA — a fast-forward merge
+          # leaves one — from having a say in whether a release goes out.
           ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&per_page=100" \
-            --jq '.workflow_runs[].id')
+            --jq '.workflow_runs[] | select(.event == "push" and .head_branch == "main") | .id')
 
           # Load-bearing: every check below passes vacuously on an empty list.
-          [ -n "$ids" ] || { echo "::error::CI never ran for ${GITHUB_SHA}"; exit 1; }
+          # A commit that never reached main lands here, so the message says so.
+          [ -n "$ids" ] || { echo "::error::ci.yml never ran for ${GITHUB_SHA} on a push to main"; exit 1; }
 
           # Every job, not the run conclusion, which reads `success` for a
           # skipped job too. No job is named, so ci.yml stays the only list.

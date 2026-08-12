@@ -20,7 +20,16 @@ go install github.com/felipeneuwald/stressy@latest
 docker pull ghcr.io/felipeneuwald/stressy:latest
 ```
 
-Or a [prebuilt binary](https://github.com/felipeneuwald/stressy/releases).
+Or a prebuilt archive from the
+[releases](https://github.com/felipeneuwald/stressy/releases) — `tar.gz` per
+unix target, `zip` for windows, each holding the binary, the licence and this
+README:
+
+```bash
+# It extracts flat, so naming the binary keeps its LICENSE and README out of the way
+tar -xzf stressy_Linux_x86_64.tar.gz stressy
+./stressy -t 5s
+```
 
 ## Usage
 

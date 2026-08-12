@@ -48,8 +48,8 @@ func TestRunStopsOnSignal(t *testing.T) {
 
 				select {
 				case err := <-done:
-					sigErr, ok := errors.AsType[*SignalError](err)
-					if !ok {
+					var sigErr *SignalError
+					if !errors.As(err, &sigErr) {
 						if err != nil {
 							t.Fatalf("Run() error = %v, want a *SignalError", err)
 						}

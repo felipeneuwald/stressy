@@ -190,7 +190,8 @@ func (c *command) execute(args []string) error {
 	// A signal-shortened run is reported by its exit code, not as an error: Run
 	// has already printed the shutdown line, and printing this would report the
 	// same shutdown twice.
-	if _, ok := errors.AsType[*SignalError](err); ok {
+	var sigErr *SignalError
+	if errors.As(err, &sigErr) {
 		return err
 	}
 
@@ -198,7 +199,8 @@ func (c *command) execute(args []string) error {
 
 	// A mistyped flag wants the flag list; a value out of range and a failed run
 	// want one line (#17a).
-	if _, ok := errors.AsType[*usageError](err); ok {
+	var usageErr *usageError
+	if errors.As(err, &usageErr) {
 		writef(c.stderr, "%s\n", c.usage(withoutExamples))
 	}
 
@@ -390,7 +392,8 @@ func Main(injected string) int {
 	// A run a signal cut short exits 128 plus the signal number, which is what
 	// makes a Kubernetes Job record an evicted pod as failed rather than
 	// Complete. execute has already silenced this one, so nothing printed it.
-	if sig, ok := errors.AsType[*SignalError](err); ok {
+	var sig *SignalError
+	if errors.As(err, &sig) {
 		return sig.ExitCode()
 	}
 

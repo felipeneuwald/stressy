@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
 - `--help` and the image description call stressy a lightweight CPU stress test tool.
+- Release binaries ship as `tar.gz` archives, `zip` on Windows, licence inside.
+- Building stressy needs Go 1.25 or newer, down from 1.26.
 
 ### Removed
 
@@ -77,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A pre-release tag no longer publishes as a full GitHub release.
 - Release binaries are reproducible: `-trimpath` and a stamped commit timestamp.
 - Release binaries are built with the latest stable Go.
-- Containerised runs respect their CPU limit; Go 1.26 makes `GOMAXPROCS` cgroup-aware.
+- Containerised runs respect their CPU limit; Go 1.25 makes `GOMAXPROCS` cgroup-aware.
 - Updated cobra, pflag, viper and golang.org/x/crypto to current versions.
 - Release binaries are a third smaller: 7.2 MB down to 4.8 MB.
 - Six indirect dependencies dropped, 18 down to 12.

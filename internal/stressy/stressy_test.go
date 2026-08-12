@@ -175,6 +175,12 @@ func TestProgressMessage(t *testing.T) {
 // TestShutdownMessage covers #57: printed in place, the two lines were swappable.
 // The two signalled cases are #111: they printed the same line while exiting 130
 // and 143, so a log could not say which shutdown it had recorded.
+//
+// Every case carries the drain clause, which is #122: the line was the last one
+// a SIGKILLed run ever printed, and it said nothing about the wait that was
+// about to swallow it. Written out in full rather than built from drainNotice,
+// because a want assembled from the code under test is green at whatever the two
+// of them agree on.
 func TestShutdownMessage(t *testing.T) {
 	tests := []struct {
 		name string
@@ -182,11 +188,11 @@ func TestShutdownMessage(t *testing.T) {
 		sig  os.Signal
 		want string
 	}{
-		{name: "timer expired", want: "Timer expired, shutting down..."},
-		{name: "SIGINT", sig: syscall.SIGINT, want: "Received SIGINT, shutting down..."},
-		{name: "SIGTERM", sig: syscall.SIGTERM, want: "Received SIGTERM, shutting down..."},
+		{name: "timer expired", want: "Timer expired, shutting down; waiting for every worker to finish the hash it is on..."},
+		{name: "SIGINT", sig: syscall.SIGINT, want: "Received SIGINT, shutting down; waiting for every worker to finish the hash it is on..."},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: "Received SIGTERM, shutting down; waiting for every worker to finish the hash it is on..."},
 		// Unreachable from shutdownSignals; the alternative is an unnamed signal.
-		{name: "a signal with no spelling", sig: unnumberedSignal{}, want: "Received unnumbered, shutting down..."},
+		{name: "a signal with no spelling", sig: unnumberedSignal{}, want: "Received unnumbered, shutting down; waiting for every worker to finish the hash it is on..."},
 	}
 
 	for _, tt := range tests {
@@ -215,7 +221,7 @@ func TestShutdownMessageNamesEverySignalARunStopsOn(t *testing.T) {
 			continue
 		}
 
-		if got := shutdownMessage(sig); got != "Received "+want+", shutting down..." {
+		if got := shutdownMessage(sig); !strings.HasPrefix(got, "Received "+want+", shutting down;") {
 			t.Errorf("shutdownMessage(%v) = %q, want it to name the signal %q (#111)", sig, got, want)
 		}
 	}
@@ -422,7 +428,7 @@ func TestRunDefaultOutputIsUnchanged(t *testing.T) {
 	if want := "Starting CPU stress test with 1 worker for 10ms"; got[0] != want {
 		t.Errorf("Run() line 1 = %q, want %q", got[0], want)
 	}
-	if want := "Timer expired, shutting down..."; got[1] != want {
+	if want := "Timer expired, shutting down; waiting for every worker to finish the hash it is on..."; got[1] != want {
 		t.Errorf("Run() line 2 = %q, want %q", got[1], want)
 	}
 	if !strings.HasPrefix(got[2], "Computed ") {
@@ -462,7 +468,7 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 		switch {
 		case strings.HasPrefix(line, "Starting CPU stress test"):
 			startup = i
-		case line == "Timer expired, shutting down...":
+		case strings.HasPrefix(line, "Timer expired, shutting down;"):
 			shutdown = i
 		case progressLine.MatchString(line):
 			progress++
@@ -490,14 +496,15 @@ func TestRunPrintsProgressWhenAsked(t *testing.T) {
 // TestWaitForShutdownPrefersAPendingSignal is #117. A signal landing in the same
 // instant the deadline expires leaves both cases of the select ready, and Go
 // picks between ready cases at random — so a SIGTERM could be reported as
-// `Timer expired, shutting down...` and exit 0, where README.md's table says 143
-// with no clause on it. The window is microseconds wide in a real run; here both
-// are ready by construction.
+// `Timer expired, ...` and exit 0, where README.md's table says 143 with no
+// clause on it. The window is microseconds wide in a real run; here both are
+// ready by construction.
 //
 // Called many times over, because one call proves nothing: the outer select is
-// still choosing at random, and a run without the drain returns the signal from
-// about half its calls anyway. Every call is decided by the drain, so a hundred
-// of them leave a missed regression at 2^-100 rather than at one coin toss.
+// still choosing at random, and a run without the second receive returns the
+// signal from about half its calls anyway. Every call is decided by that
+// receive, so a hundred of them leave a missed regression at 2^-100 rather than
+// at one coin toss.
 func TestWaitForShutdownPrefersAPendingSignal(t *testing.T) {
 	const calls = 100
 

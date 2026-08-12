@@ -77,8 +77,17 @@ type Cfg struct {
 
 // Run starts the configured workers and blocks until the timeout expires or a
 // shutdown signal arrives, printing a progress line every report interval while
-// it waits. It then waits for every worker to finish the hash it is on, so a run
-// ends up to one hash past its shutdown, and prints what the run did.
+// it waits. It then waits for every worker to finish the hash it is on — the
+// drain — and prints what the run did.
+//
+// That drain is one hash long only while the workers fit in GOMAXPROCS. Past it
+// the hashes in flight finish in series, so the drain runs for roughly
+// Workers/GOMAXPROCS of them: measured on 18 cores against `-t 1s`, `-w 18`
+// ended about 0.2s past the deadline and `-w 2000` about 20s past it. Nothing
+// caps Workers, because nothing here reads the machine (#104). What the length
+// costs is said out loud instead — the shutdown line names what the wait is for,
+// and signal handling is stopped before it, so a second signal kills the process
+// rather than being buffered where nothing reads it again (#122).
 //
 // It returns an error if the configuration is invalid, a *SignalError — not a
 // failure, an exit code — if a signal ended the run, and nil if the timer did.
@@ -101,6 +110,9 @@ func (c Cfg) Run() error {
 	// to report. TestExitCodes relies on that ordering.
 	received := make(chan os.Signal, 1)
 	signal.Notify(received, shutdownSignals...)
+
+	// The guard for a Run that never reaches the stop below, which today means
+	// a panic; the shutdown path does not wait for it, and cannot (#122).
 	defer signal.Stop(received)
 
 	writef(c.Out, "%s\n", c.startupMessage())
@@ -137,6 +149,22 @@ func (c Cfg) Run() error {
 	}
 
 	sig := c.waitForShutdown(ctx, received, &hashes, start)
+
+	// One shutdown is all this run has to report, and everything below it is the
+	// drain. Handling stops here rather than at the deferred call, which does
+	// not run until the drain is over: for the whole of a wait that grows with
+	// Workers, a second signal landed in a one-deep buffer nobody read again and
+	// the run could be stopped by nothing but SIGKILL (#122).
+	//
+	// Stopped rather than drained, so the signal goes back to the disposition it
+	// had before Notify — the default, for anything a terminal, a `docker stop`
+	// or a kubelet signals — and the second one ends the process where it
+	// stands. On the timer path too, where the run was going to exit 0 and the
+	// operator pressing Ctrl-C through the drain asked for something else.
+	//
+	// Before the line below rather than after it, so the log says the run is
+	// draining only once a signal can in fact interrupt the drain.
+	signal.Stop(received)
 
 	writef(c.Out, "%s\n", shutdownMessage(sig))
 
@@ -182,13 +210,15 @@ func (c Cfg) waitForShutdown(ctx context.Context, received <-chan os.Signal, has
 			// A signal arriving in the same instant leaves both cases ready, and
 			// select picks between ready cases at random, so the deadline could
 			// win a run a signal had ended: `Timer expired` on stdout and exit 0
-			// where README.md's table says 143. Draining first is what makes that
-			// table true — a signal already in the channel ended this run (#117).
+			// where README.md's table says 143. Reading the channel first is what
+			// makes that table true — a signal already in it ended this run (#117).
 			//
-			// A signal arriving after this returns, while Run waits out the hash
-			// each worker is inside, is dropped and the run still exits 0: by
-			// then it has served the whole timeout it was given, which is what
-			// the table says 0 is. That window is #122's.
+			// A signal arriving after this returns is not caught at all: Run
+			// stops handling the moment it has one shutdown to report, so the
+			// second one ends the process outright rather than being buffered
+			// where nothing reads it again. A run that had served its whole
+			// timeout therefore dies with the signal instead of exiting 0,
+			// which is what pressing Ctrl-C through the drain asks for (#122).
 			select {
 			case sig := <-received:
 				return sig
@@ -241,20 +271,34 @@ func progressMessage(hashes uint64, elapsed time.Duration) string {
 	)
 }
 
-// shutdownMessage says why the run is ending. sig is the signal that stopped it,
-// or nil where the timer expired — the same distinction the exit code is chosen
-// from further out.
+// drainNotice is the clause both shutdown lines end in: what the run is doing
+// between that line and the summary under it.
+//
+// Without it a drain is a hang — nothing prints, and the length is not one hash
+// but roughly Workers/GOMAXPROCS of them, which on a large `-w` is long enough
+// for a pod's terminationGracePeriodSeconds to run out and SIGKILL the process
+// before the summary or the exit code the README documents ever arrive. The log
+// is the whole of what an operator has, the image being FROM scratch, so the
+// wait says what it is for (#122).
+//
+// No count in it, deliberately: the startup line already says how many workers
+// there are, and a line that changes shape with the configuration is one more
+// thing for a script reading stdout to get wrong.
+const drainNotice = "waiting for every worker to finish the hash it is on..."
+
+// shutdownMessage says why the run is ending, and what it is waiting for before
+// it does. sig is the signal that stopped it, or nil where the timer expired —
+// the same distinction the exit code is chosen from further out.
 //
 // The signal is named rather than called "a signal", because otherwise the two
-// signalled shutdowns print the same line while exiting 130 and 143, and the log
-// is the whole of what an operator has: the image is FROM scratch, so there is no
-// shell to exec into and ask (#111).
+// signalled shutdowns print the same line while exiting 130 and 143, and telling
+// those apart is what the exit-code table is for (#111).
 func shutdownMessage(sig os.Signal) string {
 	if sig == nil {
-		return "Timer expired, shutting down..."
+		return "Timer expired, shutting down; " + drainNotice
 	}
 
-	return fmt.Sprintf("Received %s, shutting down...", signalName(sig))
+	return fmt.Sprintf("Received %s, shutting down; %s", signalName(sig), drainNotice)
 }
 
 // signalName is what stressy calls a signal in the lines it prints: "SIGTERM",
@@ -277,8 +321,10 @@ func signalName(sig os.Signal) string {
 
 // summaryMessage is the line Run prints once every worker has drained: what the
 // run did, where the line above it says only why it stopped. The elapsed time is
-// measured rather than the configured timeout echoed back, because a run ends up
-// to one hash past its deadline and the rate divides by the time that passed.
+// measured rather than the configured timeout echoed back, because a run ends
+// past its deadline — by one hash where the workers fit in GOMAXPROCS and by
+// roughly Workers/GOMAXPROCS of them where they do not — and the rate divides by
+// the time that actually passed.
 func (c Cfg) summaryMessage(hashes uint64, elapsed time.Duration) string {
 	return fmt.Sprintf(
 		"Computed %d %s in %s (%.1f hashes/s, %d %s)",
@@ -317,6 +363,11 @@ func plural[T int | uint64](n T, one, many string) string {
 // reportFloor it is the run (#114), and past the timeout it is a line that never
 // prints, which is the shape of `-r 1m` typed where `-r 1s` was meant (#115).
 //
+// Workers has no ceiling either. One far above the cores on offer is slow to
+// shut down rather than wrong, and the number it would have to be measured
+// against is GOMAXPROCS — which is the machine, and #104 settled that nothing
+// here reads the machine. Run says what the wait is for instead (#122).
+//
 // dispatch calls it so a rejected configuration is reported before the first
 // worker starts; Run calls it again for a caller that never came through the
 // command. Both matter: Workers 0 starts no goroutines and idles forever, and
@@ -343,8 +394,12 @@ func (c Cfg) validate() error {
 // stressTestCPU computes bcrypt hashes at hashCost until ctx is cancelled,
 // counting each into hashes as it goes. That is where the whole of the load
 // lives: bcrypt salts every call itself, so nothing outside the hash has to vary
-// for the work to be real, and a worker returns within one hash of ctx being
-// done.
+// for the work to be real.
+//
+// A worker returns one hash after ctx is done — one hash, not one hash's worth
+// of seconds. Past GOMAXPROCS workers that hash is sharing a core with the rest,
+// so the wall clock it takes stretches with how many there are, and the run does
+// not end until the last worker is through (#122).
 func (c Cfg) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 	// Hoisted; a constant also stays well inside bcrypt's 72-byte limit.
 	password := []byte("stressy")

@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A second signal during a shutdown stops the run instead of being ignored.
 - `--help` and `--version` reject an unexpected argument instead of discarding it.
 - A rejected value is named once in the error, not twice.
+- `--help` states each default once instead of twice on the same line.
+- An out-of-range `--workers` no longer quotes 9223372036854775807 as the ceiling.
 
 ## [0.5.0] - 2026-08-08
 

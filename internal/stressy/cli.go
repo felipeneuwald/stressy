@@ -159,6 +159,12 @@ func newCmd(cfg *Cfg, injected string) *command {
 	// by then may hold what a rejected command line left in it: `stressy -w 2 4`
 	// prints its flag list after the error, and the --workers line there has to
 	// say what a bare `stressy` starts rather than echoing the 2 that was typed.
+	//
+	// No usage text below names its own default. writeFlags appends the captured
+	// one to every row that has one, so a text saying it in words as well puts
+	// it on the line twice — `0, the default, prints none (default 0s)` (#129).
+	// What the texts do say is what the value 0 means, which the parenthesis
+	// does not.
 	c.flags = []setting{
 		{
 			long: "help", short: "h", usage: "help for " + name,
@@ -169,12 +175,12 @@ func newCmd(cfg *Cfg, injected string) *command {
 			// Both bounds are named here because both reject a command line, and
 			// the only place an operator reads before typing one is this table.
 			usage: "how often to print a progress line carrying elapsed time, hashes and rate, as a duration such as 30s or 5m, no shorter than " +
-				reportFloor.String() + " and, on a bounded run, no longer than --timeout; 0, the default, prints none",
+				reportFloor.String() + " and, on a bounded run, no longer than --timeout; 0 prints none",
 			value: report,
 		},
 		{
 			long: "timeout", short: "t", placeholder: timeout.Type(), def: timeout.String(),
-			usage: "how long to run the stress test, as a duration such as 30s or 5m; 0, the default, runs until interrupted",
+			usage: "how long to run the stress test, as a duration such as 30s or 5m; 0 runs until interrupted",
 			value: timeout,
 		},
 		{

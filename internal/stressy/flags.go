@@ -2,8 +2,6 @@ package stressy
 
 import (
 	"errors"
-	"fmt"
-	"math"
 	"strconv"
 	"time"
 )
@@ -76,6 +74,12 @@ func (w *workersValue) Type() string { return "int" }
 // comes from, captured before a command line can overwrite the value.
 func (w *workersValue) String() string { return strconv.Itoa(int(*w)) }
 
+// wantWholeNumber is the guidance both rejections below end in. It is one
+// string because the fix is one thing — type a worker count — however the value
+// failed to be one; what the two messages differ in is the diagnosis in front
+// of it.
+const wantWholeNumber = "want a whole number, 1 or greater"
+
 // parseWorkers parses a worker count. The range is deliberately not checked
 // here — a value the parser rejects is a usage error and gets the flag list
 // with it — so 0 and -1 parse, and Cfg.validate rejects them a moment later as
@@ -90,11 +94,19 @@ func parseWorkers(s string) (int, error) {
 	}
 
 	// "Not a number at all" and "a number no int can hold" want different words.
+	//
+	// No ceiling is named. Through 0.5.0 this quoted math.MaxInt, which is
+	// exactly what the parser accepts and nothing an operator can use: nine
+	// quintillion workers, against 2000 of them already costing twenty seconds
+	// of uninterruptible drain on eighteen cores. A number that far past
+	// anything that runs is the program reading its own int width aloud (#129).
+	// Nothing here has a real ceiling to offer in its place — #104 is that
+	// stressy reads nothing off the machine — so the floor is all it states.
 	if errors.Is(err, strconv.ErrRange) {
-		return 0, fmt.Errorf("out of range, want a whole number from 1 to %d", math.MaxInt)
+		return 0, errors.New("out of range, " + wantWholeNumber)
 	}
 
-	return 0, errors.New("want a whole number, 1 or greater")
+	return 0, errors.New(wantWholeNumber)
 }
 
 // boolValue is what --help and --version are registered as. flag.BoolVar cannot

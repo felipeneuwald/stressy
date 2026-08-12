@@ -39,8 +39,13 @@ func TestResolveVersion(t *testing.T) {
 	}
 }
 
-// TestVersionIsReported asserts the property: `go test` records no version.
+// TestVersionIsReported asserts the property: `go test` records no version, and
+// the command built inside one still has something to print. Read off a real
+// command rather than off resolveVersion, which is where the build path this
+// binary took reaches --version.
 func TestVersionIsReported(t *testing.T) {
+	version := newCmd(&Cfg{}, "").version
+
 	if version == "" {
 		t.Fatal("version = \"\", want a version or the development placeholder")
 	}

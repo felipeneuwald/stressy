@@ -336,7 +336,7 @@ func TestStressTestCPUStopsWhenCancelled(t *testing.T) {
 			go func() {
 				defer close(done)
 
-				Cfg{Workers: 1}.stressTestCPU(tt.ctx(t), &hashes)
+				stressTestCPU(tt.ctx(t), &hashes)
 			}()
 
 			select {
@@ -363,7 +363,7 @@ func TestStressTestCPUPublishesAsItGoes(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		Cfg{Workers: 1}.stressTestCPU(ctx, &hashes)
+		stressTestCPU(ctx, &hashes)
 	}()
 
 	deadline := time.After(stopBudget)

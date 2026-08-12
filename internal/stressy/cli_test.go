@@ -12,11 +12,12 @@ import (
 )
 
 // newTestCmd builds the real command with the stress test stubbed out and its
-// output discarded.
+// output discarded. The empty injected version is every build path but a
+// release, so what --version reports here is what resolveVersion falls back to.
 func newTestCmd(t *testing.T, cfg *Cfg) *command {
 	t.Helper()
 
-	c := newCmd(cfg)
+	c := newCmd(cfg, "")
 	c.run = func(*Cfg) error { return nil }
 	c.stdout, c.stderr = io.Discard, io.Discard
 
@@ -31,9 +32,11 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 		budget = 30 * time.Second
 	)
 
-	cfg := Cfg{Out: io.Discard}
-	cmd := newCmd(&cfg)
-	cmd.stderr = io.Discard
+	// One seam for both: the command's stdout is what the run prints through.
+	var cfg Cfg
+
+	cmd := newCmd(&cfg, "")
+	cmd.stdout, cmd.stderr = io.Discard, io.Discard
 
 	start := time.Now()
 
@@ -306,6 +309,9 @@ func TestOutOfRangeValueIsRejected(t *testing.T) {
 
 // TestHelpAndVersionWorkOnTheCommandLine: both flags answer and run nothing.
 func TestHelpAndVersionWorkOnTheCommandLine(t *testing.T) {
+	// What this binary resolves for itself, which `go test` stamps nothing into.
+	version := newCmd(&Cfg{}, "").version
+
 	tests := []struct {
 		name string
 		args []string

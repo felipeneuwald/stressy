@@ -5,12 +5,6 @@ import (
 	"strings"
 )
 
-// version is what `stressy --version` prints. Resolved here from build info
-// alone, so that it is never empty whoever builds the command — a `go test`
-// binary included, which is stamped with nothing — and re-resolved by Main with
-// the value the root main.go holds.
-var version = resolveVersion("", buildInfo())
-
 // devVersion is reported when nothing in the binary knows what it is. "devel"
 // says that plainly, where the "0.0.0" it replaces looked like a real release.
 const devVersion = "devel"

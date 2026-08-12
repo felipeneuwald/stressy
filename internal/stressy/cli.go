@@ -84,32 +84,53 @@ type command struct {
 	fs    *flag.FlagSet
 	flags []setting
 
+	// version is what `--version` prints, resolved by newCmd. A field rather
+	// than a package-level variable Main overwrites: build info was read at
+	// init and read again to throw that first result away, and what one command
+	// line answers is not the process's to hold.
+	version string
+
 	wantHelp    bool
 	wantVersion bool
 
 	// run is the stress test itself, replaced by a test that is about what a
 	// command line configures rather than about pegging a CPU for the length of
-	// one. stdout and stderr are the same seam for what the command prints.
+	// one. stdout and stderr are the same seam for what the command prints, and
+	// stdout is what the run prints through as well.
 	run    func(*Cfg) error
 	stdout io.Writer
 	stderr io.Writer
 }
 
 // newCmd builds the stressy command with its flags registered against cfg.
-func newCmd(cfg *Cfg) *command {
+// injected is the version stamped into release binaries and empty on every
+// other build path; resolveVersion falls back through build info to devVersion,
+// so `--version` answers from a binary nothing stamped, a `go test` one
+// included.
+func newCmd(cfg *Cfg, injected string) *command {
 	c := &command{
-		cfg:    cfg,
-		fs:     flag.NewFlagSet(name, flag.ContinueOnError),
-		run:    func(cfg *Cfg) error { return cfg.Run() },
-		stdout: os.Stdout,
-		stderr: os.Stderr,
+		cfg:     cfg,
+		fs:      flag.NewFlagSet(name, flag.ContinueOnError),
+		version: resolveVersion(injected, buildInfo()),
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+	}
+
+	// The run prints through the command's stdout rather than through a seam of
+	// its own. The two agreed only because both defaulted to os.Stdout, so
+	// redirecting the command left the run still printing to the terminal, and
+	// anything reading a run through a buffer had to set both.
+	c.run = func(cfg *Cfg) error {
+		cfg.Out = c.stdout
+
+		return cfg.Run()
 	}
 
 	// The flag package prints its own error and calls Usage before handing the
-	// error back. Both are silenced here, because execute prints the error and
-	// the block that goes with it from the table below.
+	// error back. One discard silences both — the default Usage writes what it
+	// prints to the output set here — because execute prints the error and the
+	// block that goes with it from the table below.
 	c.fs.SetOutput(io.Discard)
-	c.fs.Usage = func() {}
 
 	// Var rather than IntVar: the stock parser reports strconv's own error,
 	// which names a Go standard library function at an operator. See workersValue.
@@ -125,11 +146,11 @@ func newCmd(cfg *Cfg) *command {
 
 	// Var rather than DurationVar for the same reason: the stock parser rejects
 	// a bad duration as a bare "parse error". See durationValue.
-	timeout := newDurationValue(0, &cfg.Timeout)
+	timeout := newDurationValue(&cfg.Timeout)
 
 	// The same durationValue as --timeout, so both spell a duration alike.
 	// The usage text is ASCII, like every other string this program prints.
-	report := newDurationValue(0, &cfg.Report)
+	report := newDurationValue(&cfg.Report)
 
 	// Alphabetical, which is the order the Flags block prints them in; nothing
 	// sorts this at render time, so `sort` stays out of the build graph.
@@ -241,7 +262,7 @@ func (c *command) dispatch(args []string) error {
 	}
 
 	if c.wantVersion {
-		writef(c.stdout, "%s version %s\n", name, version)
+		writef(c.stdout, "%s version %s\n", name, c.version)
 
 		return nil
 	}
@@ -384,9 +405,7 @@ func wrapText(text string, width int) []string {
 // is the version stamped into release binaries, which the root main.go declares
 // because .goreleaser.yaml stamps it as `main.injected`.
 func Main(injected string) int {
-	version = resolveVersion(injected, buildInfo())
-
-	err := newCmd(&Cfg{}).execute(os.Args[1:])
+	err := newCmd(&Cfg{}, injected).execute(os.Args[1:])
 	if err == nil {
 		return 0
 	}

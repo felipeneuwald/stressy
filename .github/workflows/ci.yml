@@ -248,3 +248,35 @@ jobs:
         with:
           version: '~> v2'
           args: release --snapshot --clean
+
+      # The only thing that starts what the step above built. Three of the
+      # image's decisions are unobservable until something runs it — ENTRYPOINT,
+      # the executable bit `COPY --chmod` sets, and a numeric USER with no
+      # /etc/passwd behind it — and `FROM scratch` has no shell to repair any of
+      # them from the inside, so until this step whoever pulled the tag was the
+      # first to find out (#128).
+      #
+      # Both architectures: arm64 is half of what a release publishes, and it
+      # runs under the QEMU registered above. `--platform` because the daemon
+      # would otherwise refuse the foreign image rather than emulate it.
+      #
+      # dist/metadata.json carries the version goreleaser just used, so the tag
+      # is read back rather than templated a second time here.
+      - name: Run the images
+        run: |
+          set -euo pipefail
+
+          # `// ""` rather than jq -e, whose non-zero exit would abort the step
+          # under `set -e` before the message below could say what was wrong.
+          version=$(jq -r '.version // ""' dist/metadata.json)
+
+          # Load-bearing: an empty tag would run `stressy:-amd64` and fail on
+          # something that reads as a broken workflow rather than a broken image.
+          [ -n "$version" ] || { echo "::error::dist/metadata.json carries no version"; exit 1; }
+
+          for arch in amd64 arm64; do
+            echo "::group::linux/${arch}"
+            docker run --rm --platform "linux/${arch}" \
+              "ghcr.io/felipeneuwald/stressy:${version}-${arch}" -t 1s
+            echo "::endgroup::"
+          done

@@ -1,0 +1,15 @@
+# What a `docker build .` run here by hand sends to the daemon. A release does
+# not read this file: goreleaser stages its own build context — the binary it
+# just cross-compiled, plus the LICENSE named in .goreleaser.yaml's
+# `extra_files` — in a temporary directory, and this file is not among them.
+#
+# Everything, then back the two paths the Dockerfile copies. Without it the
+# context is the whole working tree: .git, and a dist/ that holds eight
+# cross-compiled binaries after a snapshot (#128).
+#
+# It narrows the context; it does not make a bare `docker build .` correct. The
+# `stressy` it un-ignores is whatever `go build` last wrote here, which is
+# gitignored, may be for another platform, and is nobody's idea of a release.
+*
+!stressy
+!LICENSE

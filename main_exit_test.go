@@ -104,6 +104,18 @@ func TestExitCodes(t *testing.T) {
 		{name: "a configuration the command rejects", args: "-w 0", wantCode: 1, wantStderr: "workers must be 1 or greater"},
 		// The flag package names the flag single-dashed, whichever way it was spelled.
 		{name: "a flag the command does not have", args: "--bogus", wantCode: 1, wantStderr: "flag provided but not defined: -bogus"},
+		// #124: both answered above the operand check and exited 0 with the word
+		// discarded, which is what made the 1 below true of neither command line.
+		{
+			name: "an argument after --help", args: "-h 4", wantCode: 1,
+			wantNoLines: []string{"Stressy is a lightweight"},
+			wantStderr:  `unexpected argument "4"`,
+		},
+		{
+			name: "arguments after --version", args: "-v extra junk", wantCode: 1,
+			wantNoLines: []string{"stressy version"},
+			wantStderr:  `unexpected argument "extra"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -121,7 +133,7 @@ func TestExitCodes(t *testing.T) {
 			printed := strings.Join(stdout, "\n")
 			for _, unwanted := range tt.wantNoLines {
 				if strings.Contains(printed, unwanted) {
-					t.Errorf("`stressy %s` printed:\n%s\nwant no %q in it (#52)", tt.args, printed, unwanted)
+					t.Errorf("`stressy %s` printed:\n%s\nwant no %q in it", tt.args, printed, unwanted)
 				}
 			}
 

@@ -11,7 +11,12 @@ import (
 // durationValue adapts time.Duration to the flag.Value interface. Stock
 // DurationVar rejects everything time.ParseDuration does not take as a bare
 // "parse error", which tells an operator nothing about what a good value looks
-// like; named after the flag, because the message it produces names it.
+// like.
+//
+// What Set returns is the guidance and nothing else, because the flag package
+// wraps it in `invalid value %q for flag -%s:` before an operator ever reads
+// it: naming the value here as well put it, and the flag, in the line twice
+// (#123).
 type durationValue time.Duration
 
 // newDurationValue writes the default through p, as flag's own DurationVar does.
@@ -27,7 +32,7 @@ func newDurationValue(val time.Duration, p *time.Duration) *durationValue {
 func (d *durationValue) Set(s string) error {
 	v, err := time.ParseDuration(s)
 	if err != nil {
-		return fmt.Errorf("invalid duration %q: want a duration such as 30s or 5m", s)
+		return errors.New("want a duration such as 30s or 5m")
 	}
 
 	*d = durationValue(v)
@@ -43,7 +48,7 @@ func (d *durationValue) String() string { return time.Duration(*d).String() }
 
 // workersValue adapts the worker count to the flag.Value interface. Stock
 // IntVar reports `strconv.ParseInt: parsing "abc"` at an operator who may not
-// write Go; named after the flag, because the message it produces names it.
+// write Go. Its message is the guidance alone, for durationValue's reason.
 type workersValue int
 
 // newWorkersValue writes the default through p, as flag's own IntVar does.
@@ -77,6 +82,9 @@ func (w *workersValue) String() string { return strconv.Itoa(int(*w)) }
 // here — a value the parser rejects is a usage error and gets the flag list
 // with it — so 0 and -1 parse, and Cfg.validate rejects them a moment later as
 // the runtime errors they are (#17a).
+//
+// Nothing calls it but workersValue.Set, so its message is only ever read
+// through the flag package's wrapper, and names neither the value nor the flag.
 func parseWorkers(s string) (int, error) {
 	n, err := strconv.Atoi(s)
 	if err == nil {
@@ -85,10 +93,10 @@ func parseWorkers(s string) (int, error) {
 
 	// "Not a number at all" and "a number no int can hold" want different words.
 	if errors.Is(err, strconv.ErrRange) {
-		return 0, fmt.Errorf("invalid workers %q: out of range, want a whole number from 1 to %d", s, math.MaxInt)
+		return 0, fmt.Errorf("out of range, want a whole number from 1 to %d", math.MaxInt)
 	}
 
-	return 0, fmt.Errorf("invalid workers %q: want a whole number, 1 or greater", s)
+	return 0, errors.New("want a whole number, 1 or greater")
 }
 
 // boolValue is what --help and --version are registered as. flag.BoolVar cannot
@@ -103,7 +111,7 @@ func newBoolValue(p *bool) *boolValue { return (*boolValue)(p) }
 func (b *boolValue) Set(s string) error {
 	v, err := strconv.ParseBool(s)
 	if err != nil {
-		return fmt.Errorf("invalid boolean %q: want true or false", s)
+		return errors.New("want true or false")
 	}
 
 	*b = boolValue(v)

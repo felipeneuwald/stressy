@@ -49,8 +49,10 @@ func TestParseWorkers(t *testing.T) {
 				t.Fatalf("parseWorkers(%q) error = nil, want an error", tt.in)
 			}
 
-			if !strings.Contains(err.Error(), strconv.Quote(tt.in)) {
-				t.Errorf("parseWorkers(%q) error = %q, want it to name the value", tt.in, err)
+			// The flag package wraps this in `invalid value %q for flag -%s:`,
+			// so naming the value here would put it in the line twice (#123).
+			if strings.Contains(err.Error(), strconv.Quote(tt.in)) {
+				t.Errorf("parseWorkers(%q) error = %q, want the guidance alone: the flag package names the value (#123)", tt.in, err)
 			}
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("parseWorkers(%q) error = %q, want it to contain %q", tt.in, err, tt.wantErr)

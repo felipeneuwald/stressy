@@ -247,6 +247,13 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 				}
 			}
 
+			// Once each, which is #123: the flag package already wraps what Set
+			// returns in `invalid value %q for flag -%s:`, so a Set naming the
+			// value itself made one line say it twice.
+			if got := strings.Count(err.Error(), tt.value); got != 1 {
+				t.Errorf("error = %q names %q %d times, want once (#123)", err, tt.value, got)
+			}
+
 			if strings.Contains(err.Error(), "strconv") {
 				t.Errorf("error = %q, want no strconv internals in it (#50)", err)
 			}

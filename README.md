@@ -60,7 +60,7 @@ A run says what it is about to do, why it stopped, and what it did:
 ```console
 $ stressy -w 4 -t 60s
 Starting CPU stress test with 4 workers for 60s
-Timer expired, shutting down...
+Timer expired, shutting down; waiting for every worker to finish the hash it is on...
 Computed 1324 hashes in 1m0.101s (22.0 hashes/s, 4 workers)
 ```
 
@@ -71,9 +71,18 @@ $ stressy -w 4
 Starting CPU stress test with 4 workers indefinitely
 Press Ctrl+C or send SIGTERM to stop. Use --help for additional information
 ^C
-Received SIGINT, shutting down...
+Received SIGINT, shutting down; waiting for every worker to finish the hash it is on...
 Computed 412 hashes in 18.734s (22.0 hashes/s, 4 workers)
 ```
+
+That wait is the gap between the last two lines, and it is worth knowing how
+long it can get. A run does not stop until every worker has finished the bcrypt
+hash it is inside: one hash while the workers fit in the CPUs on offer, and
+roughly `--workers` divided by that many where they do not, because from there
+the hashes in flight finish in series. Measured on 18 cores, `-w 18` stopped
+about 0.2s after the signal and `-w 2000` took about twenty seconds. A second
+signal is not caught — it ends the process where it stands — so a drain you are
+not prepared to wait out is one more Ctrl-C, at the cost of the summary line.
 
 Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
 cross-node benchmark: a node hashing 30% slower is a finding.
@@ -92,7 +101,7 @@ $ stressy -w 4 -t 2m --report 1m
 Starting CPU stress test with 4 workers for 2m0s
 1m0.001s elapsed, 1320 hashes, 22.0 hashes/s
 2m0.001s elapsed, 2636 hashes, 22.0 hashes/s
-Timer expired, shutting down...
+Timer expired, shutting down; waiting for every worker to finish the hash it is on...
 Computed 2640 hashes in 2m0.093s (22.0 hashes/s, 4 workers)
 ```
 
@@ -181,6 +190,15 @@ which is what `--report` is for, and why the shutdown line names the signal: an
 evicted pod logs `Received SIGTERM`, which is the `143` it goes on to exit with.
 `:latest` only ever points at a full release.
 
+That `143` has a deadline on it, and it is the wait described [above](#output).
+A pod's default `terminationGracePeriodSeconds` is 30 and `docker stop`'s
+default grace is 10, against a wait that grows with `--workers`: a `-w` far
+above the CPU limit can outlast either, and the container is then SIGKILLed
+part-way through it — `137`, no summary line, and none of the `143` this section
+is built on. Matching `-w` to the limit, as the manifest does, keeps the wait to
+about one hash; a `-w` deliberately above it wants a
+`terminationGracePeriodSeconds` long enough to cover the wait.
+
 ### Available Flags
 
 - `-w, --workers`: Number of parallel workers (must be 1 or greater). `1`, the default, on every machine: nothing is read from the core count, the CPU affinity mask or a cgroup limit, so the number a run uses is the number you typed
@@ -197,6 +215,13 @@ evicted pod logs `Received SIGTERM`, which is the `143` it goes on to exit with.
 | `1` | The configuration was rejected — an unknown flag, an unparseable or out-of-range value, an unexpected argument — and no work was done |
 | `130` | SIGINT cut the run short, which is 128 + 2 and what Ctrl-C sends |
 | `143` | SIGTERM cut the run short, which is 128 + 15 and what `docker stop`, a `kubectl delete pod` and a node drain send |
+
+Each of those is a code stressy chose and exited with. A second signal is not
+one: from the shutdown line on, stressy has stopped handling signals, so the
+next one kills the process outright and the status is whatever the system
+reports for a run that never exited — no summary line, and no code of stressy's
+own. That is the escape hatch for a drain too long to wait out, and the reason a
+run cannot become unstoppable.
 
 ## Building from Source
 

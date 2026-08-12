@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The shutdown line names the signal: `Received SIGTERM, shutting down...`.
+- The shutdown line names the signal and says what the run is waiting for.
 - `-r, --report` has to be `1s` or longer, and no longer than `--timeout`.
 - The help output wraps at 80 columns instead of running past the margin.
 - A rejected command line prints the flags without the examples block.
@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A signal that beats the expiring timeout exits 130 or 143, never 0.
+- A second signal during a shutdown stops the run instead of being ignored.
+- `--help` and `--version` reject an unexpected argument instead of discarding it.
+- A rejected value is named once in the error, not twice.
 
 ## [0.5.0] - 2026-08-08
 

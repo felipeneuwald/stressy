@@ -51,8 +51,10 @@ func TestDurationValueSet(t *testing.T) {
 				if err == nil {
 					t.Fatalf("Set(%q) error = nil, want an error", tt.in)
 				}
-				if !strings.Contains(err.Error(), strconv.Quote(tt.in)) {
-					t.Errorf("Set(%q) error = %q, want it to name the value", tt.in, err)
+				// The flag package wraps this in `invalid value %q for flag
+				// -%s:`, so naming the value here would print it twice (#123).
+				if strings.Contains(err.Error(), strconv.Quote(tt.in)) {
+					t.Errorf("Set(%q) error = %q, want the guidance alone: the flag package names the value (#123)", tt.in, err)
 				}
 				if !strings.Contains(err.Error(), "want a duration such as 30s or 5m") {
 					t.Errorf("Set(%q) error = %q, want it to say what a valid value looks like", tt.in, err)

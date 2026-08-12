@@ -209,9 +209,29 @@ func (c *command) execute(args []string) error {
 
 // dispatch parses args and does what they ask for, printing nothing but the
 // help screen and the version — the two answers that are not errors.
+//
+// The order below is the whole of how strict it is: a command line is rejected
+// on how it is spelled — by the parser, then by the operand check — before
+// either flag that answers gets to answer, and only then are the values it
+// carries checked for range.
 func (c *command) dispatch(args []string) error {
 	if err := c.fs.Parse(args); err != nil {
 		return &usageError{err}
+	}
+
+	// Rejects operands rather than discarding them silently: `stressy 4` would
+	// otherwise run the default count and say nothing about the 4 (#17b).
+	//
+	// Above --help and --version, because below them how strict stressy is
+	// depended on which flags were on the line: `stressy 4` exited 1 while
+	// `stressy -h 4` printed the help screen and exited 0 with the 4 discarded,
+	// which is the same silent discard, and which left README.md's exit-code
+	// table true only of a command line carrying neither flag (#124). The cost
+	// is that `stressy -h 4` now answers with `Error:` and the flag list rather
+	// than with the help it asked for; a command line stressy cannot read is
+	// not one it can obey a flag from.
+	if rest := c.fs.Args(); len(rest) > 0 {
+		return &usageError{fmt.Errorf("unexpected argument %q: stressy takes flags only", rest[0])}
 	}
 
 	if c.wantHelp {
@@ -224,12 +244,6 @@ func (c *command) dispatch(args []string) error {
 		writef(c.stdout, "%s version %s\n", name, version)
 
 		return nil
-	}
-
-	// Rejects operands rather than discarding them silently: `stressy 4` would
-	// otherwise run the default count and say nothing about the 4 (#17b).
-	if rest := c.fs.Args(); len(rest) > 0 {
-		return &usageError{fmt.Errorf("unexpected argument %q: stressy takes flags only", rest[0])}
 	}
 
 	// A value the parser accepted can still be out of range. Deliberately not a

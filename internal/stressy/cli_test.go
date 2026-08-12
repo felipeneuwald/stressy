@@ -247,6 +247,13 @@ func TestMalformedFlagValueIsRejected(t *testing.T) {
 				}
 			}
 
+			// Once each, which is #123: the flag package already wraps what Set
+			// returns in `invalid value %q for flag -%s:`, so a Set naming the
+			// value itself made one line say it twice.
+			if got := strings.Count(err.Error(), tt.value); got != 1 {
+				t.Errorf("error = %q names %q %d times, want once (#123)", err, tt.value, got)
+			}
+
 			if strings.Contains(err.Error(), "strconv") {
 				t.Errorf("error = %q, want no strconv internals in it (#50)", err)
 			}
@@ -362,21 +369,39 @@ func TestHelpAndVersionGoToStdout(t *testing.T) {
 }
 
 // TestPositionalArgumentsAreRejected covers #17b: `stressy 4` ignored the 4.
+//
+// The last two cases are #124. Both flags answered above the check and returned
+// before it, so `stressy -h 4` printed the help screen and exited 0 with the 4
+// discarded — the same silent discard #17b was about, and one that left
+// README.md's exit-code table true only of a line carrying neither flag.
 func TestPositionalArgumentsAreRejected(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
 		wantArg string
+		// wantUnprinted is the answer a flag on the line would have given, and
+		// which the rejected command line must not have produced.
+		wantUnprinted string
 	}{
 		{name: "bare argument", args: []string{"4"}, wantArg: "4"},
 		{name: "several arguments", args: []string{"foo", "bar", "4"}, wantArg: "foo"},
 		{name: "argument after a flag", args: []string{"-w", "4", "extra"}, wantArg: "extra"},
+		// The help screen opens with Description; the flag list under the error
+		// does not, so this names the branch that must not have been taken.
+		{name: "argument after --help", args: []string{"-h", "4"}, wantArg: "4", wantUnprinted: Description},
+		{name: "arguments after --version", args: []string{"-v", "extra", "junk"}, wantArg: "extra", wantUnprinted: "stressy version"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var cfg Cfg
 			cmd := newTestCmd(t, &cfg)
+
+			var out bytes.Buffer
+			cmd.stdout, cmd.stderr = &out, &out
+
+			var ran bool
+			cmd.run = func(*Cfg) error { ran = true; return nil }
 
 			err := cmd.execute(tt.args)
 			if err == nil {
@@ -385,6 +410,14 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 
 			if !strings.Contains(err.Error(), tt.wantArg) {
 				t.Errorf("execute(%q) error = %q, want it to name %q", tt.args, err, tt.wantArg)
+			}
+
+			if ran {
+				t.Errorf("execute(%q) started the run, want the command line rejected first", tt.args)
+			}
+
+			if tt.wantUnprinted != "" && strings.Contains(out.String(), tt.wantUnprinted) {
+				t.Errorf("execute(%q) printed:\n%s\nwant no %q in it: an unreadable command line is answered by the error, not by the flag on it (#124)", tt.args, out.String(), tt.wantUnprinted)
 			}
 		})
 	}

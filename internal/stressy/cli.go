@@ -26,21 +26,21 @@ const useLine = "  " + name + " [flags]"
 // stderr wants it on one line rather than in three pieces.
 const helpWidth = 80
 
-// Description is what `stressy --help` prints above the usage block.
+// description is what `stressy --help` prints above the usage block.
 // Duplicated from the README because in the FROM scratch image --help is the
 // only documentation that ships.
-const Description = `Stressy is a lightweight tool to perform CPU stress tests.
+const description = `Stressy is a lightweight tool to perform CPU stress tests.
 
 Every setting is a flag; nothing is read from the environment.`
 
-// Examples is the block `stressy --help` prints under `Examples:`. Nothing runs
+// examplesBlock is what `stressy --help` prints under `Examples:`. Nothing runs
 // these lines through the parser any more, so an example naming a flag that no
 // longer exists reaches the reader rather than a test.
 //
 // Written to fit helpWidth rather than wrapped to it: a wrapped command line is
 // one nobody can paste, and a comment that has to be re-flowed is one that was
 // too long to read (#116).
-const Examples = `  # One worker until interrupted
+const examplesBlock = `  # One worker until interrupted
   stressy
 
   # Four workers for five minutes
@@ -235,7 +235,7 @@ func (c *command) dispatch(args []string) error {
 	}
 
 	if c.wantHelp {
-		writef(c.stdout, "%s\n\n%s", Description, c.usage(withExamples))
+		writef(c.stdout, "%s\n\n%s", description, c.usage(withExamples))
 
 		return nil
 	}
@@ -287,7 +287,7 @@ func (c *command) usage(examples bool) string {
 
 	if examples {
 		b.WriteString("\n\nExamples:\n")
-		b.WriteString(Examples)
+		b.WriteString(examplesBlock)
 	}
 
 	b.WriteString("\n\nFlags:\n")
@@ -378,18 +378,6 @@ func wrapText(text string, width int) []string {
 	}
 
 	return lines
-}
-
-// Parse resolves one command line into cfg the way a run does — the flags, then
-// the range checks — and starts no stress test. That is the seam the
-// documentation tests drive: they are about what a published invocation
-// configures, not about pegging a CPU for the length of one.
-func Parse(cfg *Cfg, args []string) error {
-	c := newCmd(cfg)
-	c.run = func(*Cfg) error { return nil }
-	c.stdout, c.stderr = io.Discard, io.Discard
-
-	return c.execute(args)
 }
 
 // Main runs stressy and returns the code the process is to exit with. injected

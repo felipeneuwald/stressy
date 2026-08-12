@@ -386,9 +386,9 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 		{name: "bare argument", args: []string{"4"}, wantArg: "4"},
 		{name: "several arguments", args: []string{"foo", "bar", "4"}, wantArg: "foo"},
 		{name: "argument after a flag", args: []string{"-w", "4", "extra"}, wantArg: "extra"},
-		// The help screen opens with Description; the flag list under the error
-		// does not, so this names the branch that must not have been taken.
-		{name: "argument after --help", args: []string{"-h", "4"}, wantArg: "4", wantUnprinted: Description},
+		// The help screen opens with the description; the flag list under the
+		// error does not, so this names the branch that must not have been taken.
+		{name: "argument after --help", args: []string{"-h", "4"}, wantArg: "4", wantUnprinted: description},
 		{name: "arguments after --version", args: []string{"-v", "extra", "junk"}, wantArg: "extra", wantUnprinted: "stressy version"},
 	}
 
@@ -549,7 +549,7 @@ func TestHelpFitsEightyColumns(t *testing.T) {
 	cmd := newTestCmd(t, &cfg)
 
 	screens := map[string]string{
-		"--help":        Description + "\n\n" + cmd.usage(withExamples),
+		"--help":        description + "\n\n" + cmd.usage(withExamples),
 		"a usage error": cmd.usage(withoutExamples),
 	}
 

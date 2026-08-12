@@ -1,6 +1,12 @@
 // Package stressy is the stressy command: the flag grammar it publishes and the
 // CPU stress test that grammar configures, which worker goroutines run by
 // hashing bcrypt. The root main.go is a call into Main and nothing else.
+//
+// What stressy publishes is that command line, not a Go API. The package is
+// under internal/, so nothing here can be imported from outside this module,
+// and 1.0.0 freezes the flags rather than any identifier below. Main is the
+// whole of what main.go needs; a name exported past it is exported for a caller
+// that cannot exist.
 package stressy
 
 import (

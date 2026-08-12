@@ -19,12 +19,10 @@ import (
 // (#123).
 type durationValue time.Duration
 
-// newDurationValue writes the default through p, as flag's own DurationVar does.
-func newDurationValue(val time.Duration, p *time.Duration) *durationValue {
-	*p = val
-
-	return (*durationValue)(p)
-}
+// newDurationValue leaves p as it is, as newBoolValue does: both flags default
+// to 0, which is the zero value of the field each writes through and what the
+// flag package records for the `(default 0s)` in the help line.
+func newDurationValue(p *time.Duration) *durationValue { return (*durationValue)(p) }
 
 // Set takes Go's duration syntax and nothing else. A bare count of seconds was
 // accepted from 0.1.0 to 0.5.0 and is now rejected, loudly: `-t 60` fails here

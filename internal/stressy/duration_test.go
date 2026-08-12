@@ -45,7 +45,7 @@ func TestDurationValueSet(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var got time.Duration
 
-			err := newDurationValue(0, &got).Set(tt.in)
+			err := newDurationValue(&got).Set(tt.in)
 
 			if tt.wantErr {
 				if err == nil {

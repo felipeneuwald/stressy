@@ -12,11 +12,12 @@ import (
 )
 
 // newTestCmd builds the real command with the stress test stubbed out and its
-// output discarded.
+// output discarded. The empty injected version is every build path but a
+// release, so what --version reports here is what resolveVersion falls back to.
 func newTestCmd(t *testing.T, cfg *Cfg) *command {
 	t.Helper()
 
-	c := newCmd(cfg)
+	c := newCmd(cfg, "")
 	c.run = func(*Cfg) error { return nil }
 	c.stdout, c.stderr = io.Discard, io.Discard
 
@@ -31,9 +32,11 @@ func TestBoundedRunExecutesTheStressTest(t *testing.T) {
 		budget = 30 * time.Second
 	)
 
-	cfg := Cfg{Out: io.Discard}
-	cmd := newCmd(&cfg)
-	cmd.stderr = io.Discard
+	// One seam for both: the command's stdout is what the run prints through.
+	var cfg Cfg
+
+	cmd := newCmd(&cfg, "")
+	cmd.stdout, cmd.stderr = io.Discard, io.Discard
 
 	start := time.Now()
 
@@ -306,6 +309,9 @@ func TestOutOfRangeValueIsRejected(t *testing.T) {
 
 // TestHelpAndVersionWorkOnTheCommandLine: both flags answer and run nothing.
 func TestHelpAndVersionWorkOnTheCommandLine(t *testing.T) {
+	// What this binary resolves for itself, which `go test` stamps nothing into.
+	version := newCmd(&Cfg{}, "").version
+
 	tests := []struct {
 		name string
 		args []string
@@ -386,9 +392,9 @@ func TestPositionalArgumentsAreRejected(t *testing.T) {
 		{name: "bare argument", args: []string{"4"}, wantArg: "4"},
 		{name: "several arguments", args: []string{"foo", "bar", "4"}, wantArg: "foo"},
 		{name: "argument after a flag", args: []string{"-w", "4", "extra"}, wantArg: "extra"},
-		// The help screen opens with Description; the flag list under the error
-		// does not, so this names the branch that must not have been taken.
-		{name: "argument after --help", args: []string{"-h", "4"}, wantArg: "4", wantUnprinted: Description},
+		// The help screen opens with the description; the flag list under the
+		// error does not, so this names the branch that must not have been taken.
+		{name: "argument after --help", args: []string{"-h", "4"}, wantArg: "4", wantUnprinted: description},
 		{name: "arguments after --version", args: []string{"-v", "extra", "junk"}, wantArg: "extra", wantUnprinted: "stressy version"},
 	}
 
@@ -549,7 +555,7 @@ func TestHelpFitsEightyColumns(t *testing.T) {
 	cmd := newTestCmd(t, &cfg)
 
 	screens := map[string]string{
-		"--help":        Description + "\n\n" + cmd.usage(withExamples),
+		"--help":        description + "\n\n" + cmd.usage(withExamples),
 		"a usage error": cmd.usage(withoutExamples),
 	}
 

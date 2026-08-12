@@ -1,6 +1,12 @@
 // Package stressy is the stressy command: the flag grammar it publishes and the
 // CPU stress test that grammar configures, which worker goroutines run by
 // hashing bcrypt. The root main.go is a call into Main and nothing else.
+//
+// What stressy publishes is that command line, not a Go API. The package is
+// under internal/, so nothing here can be imported from outside this module,
+// and 1.0.0 freezes the flags rather than any identifier below. Main is the
+// whole of what main.go needs; a name exported past it is exported for a caller
+// that cannot exist.
 package stressy
 
 import (
@@ -70,8 +76,9 @@ type Cfg struct {
 	Timeout time.Duration // how long to run (0 for indefinite)
 	Report  time.Duration // how often to print a progress line (0 for never)
 
-	// Out is where a run prints its four kinds of line. nil is os.Stdout, which
-	// is what the command leaves it as; a test reads a run through a buffer.
+	// Out is where a run prints its four kinds of line. The command sets it to
+	// the stream it prints its own lines on, so redirecting that redirects both;
+	// nil is os.Stdout, for a run configured by something other than a command.
 	Out io.Writer
 }
 
@@ -144,7 +151,7 @@ func (c Cfg) Run() error {
 	for range c.Workers {
 		go func() {
 			defer wg.Done()
-			c.stressTestCPU(ctx, &hashes)
+			stressTestCPU(ctx, &hashes)
 		}()
 	}
 
@@ -400,7 +407,7 @@ func (c Cfg) validate() error {
 // of seconds. Past GOMAXPROCS workers that hash is sharing a core with the rest,
 // so the wall clock it takes stretches with how many there are, and the run does
 // not end until the last worker is through (#122).
-func (c Cfg) stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
+func stressTestCPU(ctx context.Context, hashes *atomic.Uint64) {
 	// Hoisted; a constant also stays well inside bcrypt's 72-byte limit.
 	password := []byte("stressy")
 

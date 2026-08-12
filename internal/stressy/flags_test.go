@@ -18,7 +18,10 @@ type acceptedValue struct{ set, want string }
 func TestFlagValues(t *testing.T) {
 	var (
 		workers int
-		timeout time.Duration
+		// Set here rather than passed to the constructor: the duration value
+		// adapts the field it is given and writes no default through it, so what
+		// the flag package records is whatever that field already holds.
+		timeout = 90 * time.Second
 	)
 
 	tests := []struct {
@@ -49,7 +52,7 @@ func TestFlagValues(t *testing.T) {
 		{
 			name: "timeout",
 			register: func(fs *flag.FlagSet) {
-				fs.Var(newDurationValue(90*time.Second, &timeout), "timeout", "how long to run")
+				fs.Var(newDurationValue(&timeout), "timeout", "how long to run")
 			},
 			get:           func() string { return timeout.String() },
 			wantType:      "duration",
@@ -87,7 +90,7 @@ func TestFlagValues(t *testing.T) {
 				t.Errorf("%s default = %q, want %q", tt.name, f.DefValue, tt.wantDef)
 			}
 			if got := tt.get(); got != tt.wantDef {
-				t.Errorf("%s = %q, want the default written through the pointer", tt.name, got)
+				t.Errorf("%s = %q, want registration to leave the default in the caller's variable", tt.name, got)
 			}
 
 			for _, a := range tt.accepted {

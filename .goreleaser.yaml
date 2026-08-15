@@ -115,6 +115,23 @@ docker_manifests:
       - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-amd64{{ end }}"
       - "{{ if not .Prerelease }}ghcr.io/felipeneuwald/stressy:latest-arm64{{ end }}"
 
+# The release notes are `git log {{ .Git.PreviousTag }}..{{ .Git.CurrentTag }}`,
+# and goreleaser resolves the previous tag with `git describe --tags
+# --abbrev=0 tags/<current>^`. An rc tag is a tag, so a `vX.Y.Z` tagged after
+# a `vX.Y.Z-rcN` rehearsal takes the rc as its predecessor and publishes only
+# the commits since it. v0.4.0 shipped that way: two commits in range, one
+# `Merge pull request` and one `ci:`, both filtered below, so its page reads
+# `## Changelog` and nothing else. The failure is silent — goreleaser exits 0
+# and every artefact is correct, so the empty page is the only sign (#142).
+#
+# `ignore_tags` is the whole of the exclude list, and its entries reach
+# `describe` as `--exclude=`, so they are globs rather than tag names. The
+# rehearsal release keeps its own tag: only `describe` gets the globs, and the
+# current-tag lookup matches this list literally, which no real tag does.
+git:
+  ignore_tags:
+    - "*-rc*"
+
 changelog:
   sort: asc
   filters:

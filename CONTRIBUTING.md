@@ -103,7 +103,10 @@ CI, comments, internal layout or documentation can see gets no entry at all.
    and re-run the workflow.
 3. To rehearse the publishing half, tag a `vX.Y.Z-rcN` pre-release first:
    `prerelease: auto` and the `{{ if not .Prerelease }}` guards keep it off
-   `:latest` and off GitHub's "Latest release".
+   `:latest` and off GitHub's "Latest release", and `git.ignore_tags` keeps it
+   out of the range the final tag's notes are generated from — without that, a
+   final tag landing after a rehearsal describes back to the rc and publishes
+   only the commits since it, which is how v0.4.0's page ended up empty (#142).
 
 ## Security
 

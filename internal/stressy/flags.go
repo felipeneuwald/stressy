@@ -103,8 +103,10 @@ func parseWorkers(s string) (int, error) {
 	// quintillion workers, against 2000 of them already costing twenty seconds
 	// of uninterruptible drain on eighteen cores. A number that far past
 	// anything that runs is the program reading its own int width aloud (#129).
-	// Nothing here has a real ceiling to offer in its place — #104 is that
-	// stressy reads nothing off the machine — so the floor is all it states.
+	// Cfg.validate does have a ceiling to name now — sync.WaitGroup's int32
+	// (#143) — and it is left out of here for that same reason: an arithmetic
+	// limit is worth stating to whoever exceeded it and to nobody else. The
+	// floor is all this states.
 	if errors.Is(err, strconv.ErrRange) {
 		return 0, errors.New("out of range, " + wantWholeNumber)
 	}

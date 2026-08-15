@@ -115,10 +115,10 @@ jobs:
       # -coverpkg=./... is what makes this the merged figure rather than each
       # package's own: main_exit_test.go is `package main` and drives
       # internal/stressy through a re-execed main(), which without the flag
-      # counts for nothing — 91.1% against 95.8%. The child's counters survive
-      # os.Exit, so nothing here needs `go build -cover` or a GOCOVERDIR.
-      # CONTRIBUTING.md publishes this command line, so a change here is a
-      # change there.
+      # counts for nothing and takes a few points off the total with it. The
+      # child's counters survive os.Exit, so nothing here needs
+      # `go build -cover` or a GOCOVERDIR. CONTRIBUTING.md publishes this
+      # command line, so a change here is a change there.
       - name: Measure coverage
         id: cover
         run: |
@@ -149,9 +149,9 @@ jobs:
           } >>"$GITHUB_STEP_SUMMARY"
 
       # The README badge's number, and the only thing the write grant is for.
-      # img.shields.io renders whatever this file says, so no percentage is
-      # written anywhere in the tree — which is what #62 was, CHANGELOG.md
-      # claiming 97.3% where the measurement said 97.6%.
+      # img.shields.io renders whatever this file says, so no document has to
+      # state the current figure — which is what #62 was, CHANGELOG.md claiming
+      # 97.3% where the measurement said 97.6%.
       #
       # One orphan commit, force-pushed: the branch is a file's current value
       # rather than a history, and a commit per merge would be noise in every

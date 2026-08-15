@@ -76,9 +76,13 @@ type Cfg struct {
 	Timeout time.Duration // how long to run (0 for indefinite)
 	Report  time.Duration // how often to print a progress line (0 for never)
 
-	// Out is where a run prints its four kinds of line. The command sets it to
-	// the stream it prints its own lines on, so redirecting that redirects both;
-	// nil is os.Stdout, for a run configured by something other than a command.
+	// Out is where a run prints, and every line a run prints goes through it:
+	// the startup line, the hint an indefinite run adds under it, a progress
+	// line per --report tick, the shutdown line and the summary. The hint and
+	// the progress line are conditional, so only a run that is both indefinite
+	// and reporting prints all of them. The command sets it to the stream it
+	// prints its own lines on, so redirecting that redirects both; nil is
+	// os.Stdout, for a run configured by something other than a command.
 	Out io.Writer
 }
 

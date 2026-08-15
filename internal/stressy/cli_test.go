@@ -666,6 +666,38 @@ func TestHelpPrintsTheCapturedDefault(t *testing.T) {
 	}
 }
 
+// TestTheDefaultIsPrintedOnce is the other half of the pair above, and #129:
+// writeFlags appends the captured default to every row that has one, so a usage
+// text that names it as well states it twice on the same line — `0, the
+// default, prints none (default 0s)`. The parenthesis is what stays, being the
+// half a reader scans a table for; what the texts keep saying is what the value
+// 0 does, which the parenthesis does not.
+func TestTheDefaultIsPrintedOnce(t *testing.T) {
+	var cfg Cfg
+	cmd := newTestCmd(t, &cfg)
+
+	var checked int
+
+	for _, s := range cmd.flags {
+		// --help and --version print no default, so they have none to repeat.
+		if s.def == "" {
+			continue
+		}
+
+		checked++
+
+		if strings.Contains(s.usage, "default") {
+			t.Errorf("--%s usage = %q, want the default left to the %q writeFlags appends", s.long, s.usage, "(default "+s.def+")")
+		}
+	}
+
+	// A table whose rows all lost their defaults would leave this asserting
+	// nothing, quietly.
+	if checked != 3 {
+		t.Errorf("the flag table has %d rows carrying a default, want the 3 that print one", checked)
+	}
+}
+
 // lookupSetting returns the table row a flag name is registered from.
 func lookupSetting(c *command, long string) (setting, bool) {
 	for _, s := range c.flags {

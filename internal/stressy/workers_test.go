@@ -65,15 +65,19 @@ func TestParseWorkers(t *testing.T) {
 	}
 }
 
-// TestParseWorkersRangeNamesTheLimit pins the one number the out-of-range
-// message states; it is the platform's, so a 32-bit build says what is true there.
-func TestParseWorkersRangeNamesTheLimit(t *testing.T) {
+// TestParseWorkersRangeNamesNoCeiling replaces the test that pinned the number
+// the out-of-range message stated through 0.5.0. That number was math.MaxInt:
+// the platform's, so it was true, and nine quintillion workers, so it was no
+// use to anyone typing a command line (#129). Nothing took its place — a real
+// ceiling would have to be measured off the machine, which #104 settled — so
+// what is pinned here is that the int width stays out of the message.
+func TestParseWorkersRangeNamesNoCeiling(t *testing.T) {
 	_, err := parseWorkers("99999999999999999999")
 	if err == nil {
 		t.Fatal("parseWorkers() error = nil, want the value to be rejected")
 	}
 
-	if !strings.Contains(err.Error(), strconv.Itoa(math.MaxInt)) {
-		t.Errorf("parseWorkers() error = %q, want it to name the maximum %d", err, math.MaxInt)
+	if strings.Contains(err.Error(), strconv.Itoa(math.MaxInt)) {
+		t.Errorf("parseWorkers() error = %q, want %d left out of it: an int width is not guidance (#129)", err, math.MaxInt)
 	}
 }

@@ -36,6 +36,11 @@ the `//go:build unix` files stay out of the Windows build, since signalling your
 own process is not a thing there. A `govulncheck` scan and a `goreleaser` dry
 run are jobs of their own; neither needs a local equivalent.
 
+The dry run is also the only thing that starts a container: it snapshots the
+release, then runs both images it built with `-t 1s`. `FROM scratch` cannot
+repair an `ENTRYPOINT`, an executable bit or a numeric `USER` from the inside,
+so the alternative to that step is finding out from a published tag.
+
 ## Coverage
 
 `Coverage` is a job of its own too, and it reports rather than gates: it writes

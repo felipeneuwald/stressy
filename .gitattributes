@@ -1,3 +1,7 @@
-# The tests read this repository back and match it with `(?m)^…$`, which a CRLF
-# checkout breaks; without this the Windows leg depends on a local git setting.
+# A CRLF checkout breaks two of the checks CONTRIBUTING.md documents, and both
+# fail invisibly: gofmt rewrites the line endings, so `golangci-lint fmt --diff`
+# reports every Go file as unformatted, and `go mod tidy -diff` reports go.sum
+# the same way — each printing a patch in which no line appears to change. `*`
+# rather than `*.go` is for the second. Without this, whether a clone passes
+# depends on a local git setting.
 * text=auto eol=lf

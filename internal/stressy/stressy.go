@@ -364,11 +364,12 @@ func plural[T int | uint64](n T, one, many string) string {
 }
 
 // validate reports whether a run can be started with this configuration.
-// Timeout 0 is indefinite and Report 0 is off, and neither has an upper bound,
-// because any length is one the operator asked for. A report interval has both
-// bounds, because outside them it is not an interval anybody asked for: under
-// reportFloor it is the run (#114), and past the timeout it is a line that never
-// prints, which is the shape of `-r 1m` typed where `-r 1s` was meant (#115).
+// Timeout 0 is indefinite and has no upper bound, because any length is one the
+// operator asked for. Report 0 is off; an interval that is on has a floor
+// always and a ceiling on a bounded run, because outside them it is not one
+// anybody asked for: under reportFloor it is the run (#114), and past the
+// timeout it is a line that never prints, which is the shape of `-r 1m` typed
+// where `-r 1s` was meant (#115).
 //
 // Workers has no ceiling either. One far above the cores on offer is slow to
 // shut down rather than wrong, and the number it would have to be measured

@@ -26,9 +26,10 @@ const useLine = "  " + name + " [flags]"
 // stderr wants it on one line rather than in three pieces.
 const helpWidth = 80
 
-// description is what `stressy --help` prints above the usage block.
-// Duplicated from the README because in the FROM scratch image --help is the
-// only documentation that ships.
+// description is what `stressy --help` prints above the usage block: what
+// stressy is, and that a command line is the whole of what configures it. Said
+// here rather than left to the README because in the FROM scratch image --help
+// is the only documentation that ships.
 const description = `Stressy is a lightweight tool to perform CPU stress tests.
 
 Every setting is a flag; nothing is read from the environment.`

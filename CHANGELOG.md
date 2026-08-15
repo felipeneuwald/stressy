@@ -16,14 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--workers` defaults to 1 again, not the number of CPUs available.
 - Attached and grouped shorthands (`-w4`, `-t30s`, `-hv`) no longer parse.
 - A rejected value echoes the spelling typed: `invalid value "abc" for flag -workers`.
-- `--help` and the image description call stressy a lightweight CPU stress test tool.
+- An unknown flag reads `flag provided but not defined: -foo`, one dash or two.
+- A flag missing its value reads `flag needs an argument: -workers`.
+- `--help` and the image description call stressy lightweight, not simple.
 - Release binaries ship as `tar.gz` archives, `zip` on Windows, licence inside.
 - Building stressy needs Go 1.25 or newer, down from 1.26.
 
 ### Removed
 
 - Environment-variable configuration: `STRESSY_WORKERS`, `STRESSY_TIMEOUT` and `STRESSY_REPORT`.
-- A bare number as a duration: `-t 60` now has to be `-t 60s`.
+- A bare number as a duration: `-t 60` and `-r 60` now need a unit.
 - NetBSD and OpenBSD release binaries.
 - cobra and pflag: one direct dependency left, and binaries 27% smaller.
 
@@ -163,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved build and release process with GoReleaser
 - Updated golang.org/x/crypto dependency to latest version
 
-## [0.1.0] - 2020-04-01
+## 0.1.0 - 2020-04-01
 
 ### Added
 

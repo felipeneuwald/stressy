@@ -76,8 +76,8 @@ describes is a matter of reading both when you change either.
 Branches are named `type/short-description`: `fix/`, `feat/`, `docs/`, `deps/`,
 `refactor/`, `ci/`, `release/`. Commit subjects use the same prefixes, in the
 imperative and in lower case — `fix: publish the windows/arm64 binary`. `docs:`,
-`test:` and `ci:` are filtered out of the release notes, so use them for changes
-a user would not notice. One issue per pull request where you can.
+`test:`, `ci:` and `refactor:` are filtered out of the release notes, so use them
+for changes a user would not notice. One issue per pull request where you can.
 
 ## The changelog
 

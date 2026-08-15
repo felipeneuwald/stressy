@@ -73,8 +73,10 @@ jobs:
       contents: write # creates the release, uploads archives
       packages: write # pushes images and manifests to ghcr.io
     steps:
-      # Major tags, as in ci.yml — and unlike ci.yml's, these refs run with the
-      # write grants above, so a moved tag reaches the release itself (#65).
+      # Major tags, as in ci.yml, and here they run with both grants above, so a
+      # moved tag reaches the release and ghcr.io. ci.yml grants contents: write
+      # to one job as well, so what differs is the blast radius rather than one
+      # side's refs being unprivileged (#65).
       - name: Checkout
         uses: actions/checkout@v7
         with:

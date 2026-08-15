@@ -9,9 +9,10 @@
 A CPU stress tool. It loads as many CPUs as you ask it for with bcrypt hashing
 and reports the rate, so the same run on two nodes is a comparison.
 
-`stress-ng` has 300 stressors; stressy has one and deploys anywhere — a 2.1 MB
-static binary for eight OS/architecture targets, and a `FROM scratch` image
-with no base layer, no package manager, no shell and a non-root UID.
+`stress-ng` has 300 stressors; stressy has one and deploys anywhere — a static
+binary of about two megabytes for eight OS/architecture targets, and a
+`FROM scratch` image with no base layer, no package manager, no shell and a
+non-root UID.
 
 ## Install
 
@@ -59,7 +60,7 @@ A run says what it is about to do, why it stopped, and what it did:
 
 ```console
 $ stressy -w 4 -t 60s
-Starting CPU stress test with 4 workers for 60s
+Starting CPU stress test with 4 workers for 1m0s
 Timer expired, shutting down; waiting for every worker to finish the hash it is on...
 Computed 1324 hashes in 1m0.101s (22.0 hashes/s, 4 workers)
 ```

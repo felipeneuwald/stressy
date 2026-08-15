@@ -18,8 +18,8 @@ import (
 type durationValue time.Duration
 
 // newDurationValue leaves p as it is, as newBoolValue does: both flags default
-// to 0, which is the zero value of the field each writes through and what the
-// flag package records for the `(default 0s)` in the help line.
+// to 0, which is the zero value of the field each writes through and what
+// cli.go's table captures for the `(default 0s)` in the help line.
 func newDurationValue(p *time.Duration) *durationValue { return (*durationValue)(p) }
 
 // Set takes Go's duration syntax and nothing else. A bare count of seconds was
@@ -69,9 +69,12 @@ func (w *workersValue) Set(s string) error {
 // The flag package has no use for it and ignores the extra method.
 func (w *workersValue) Type() string { return "int" }
 
-// String is what the flag package prints for a set flag, and what it records as
-// DefValue at registration — which is where the `(default N)` in the help line
-// comes from, captured before a command line can overwrite the value.
+// String is what cli.go's table captures as `def:` when it is built, which is
+// where the `(default N)` in the help line comes from — read before a command
+// line can overwrite the value. The flag package records the same string as
+// DefValue at registration and prints it nowhere, newCmd having handed the
+// FlagSet io.Discard; nor does it print a set flag's value. Only the tests read
+// either back.
 func (w *workersValue) String() string { return strconv.Itoa(int(*w)) }
 
 // wantWholeNumber is the guidance both rejections below end in. It is one

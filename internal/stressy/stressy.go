@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"sync"
@@ -95,10 +96,12 @@ type Cfg struct {
 // the hashes in flight finish in series, so the drain runs for roughly
 // Workers/GOMAXPROCS of them: measured on 18 cores against `-t 1s`, `-w 18`
 // ended about 0.2s past the deadline and `-w 2000` about 20s past it. Nothing
-// caps Workers, because nothing here reads the machine (#104). What the length
-// costs is said out loud instead — the shutdown line names what the wait is for,
-// and signal handling is stopped before it, so a second signal kills the process
-// rather than being buffered where nothing reads it again (#122).
+// caps Workers against the machine, because nothing here reads the machine
+// (#104): the one ceiling validate imposes is the int32 the wg.Add below counts
+// in, not the cores (#143). What the length costs is said out loud instead —
+// the shutdown line names what the wait is for, and signal handling is stopped
+// before it, so a second signal kills the process rather than being buffered
+// where nothing reads it again (#122).
 //
 // It returns an error if the configuration is invalid, a *SignalError — not a
 // failure, an exit code — if a signal ended the run, and nil if the timer did.
@@ -375,10 +378,18 @@ func plural[T int | uint64](n T, one, many string) string {
 // timeout it is a line that never prints, which is the shape of `-r 1m` typed
 // where `-r 1s` was meant (#115).
 //
-// Workers has no ceiling either. One far above the cores on offer is slow to
-// shut down rather than wrong, and the number it would have to be measured
-// against is GOMAXPROCS — which is the machine, and #104 settled that nothing
-// here reads the machine. Run says what the wait is for instead (#122).
+// Workers has the one ceiling the program cannot do without. sync.WaitGroup
+// counts in an int32, so Run's wg.Add wrapped negative at 2^31 and the run died
+// on `panic: sync: negative WaitGroup counter`: a stack trace, no shutdown line
+// and no summary, and exit 2 — a code README.md's table does not carry (#143).
+// That is a property of the library rather than of the host, so #104's "nothing
+// here reads the machine" stands.
+//
+// It is also the whole of the ceiling. `-w 500000 -t 1ns` completes cleanly and
+// exits 0, so any lower bound would be invented, and the number it would have to
+// be measured against is GOMAXPROCS — which is the machine. A count far above
+// the cores on offer is slow to shut down rather than wrong, and Run says what
+// that wait is for instead (#122).
 //
 // dispatch calls it so a rejected configuration is reported before the first
 // worker starts; Run calls it again for a caller that never came through the
@@ -388,6 +399,13 @@ func (c Cfg) validate() error {
 	switch {
 	case c.Workers < 1:
 		return fmt.Errorf("workers must be 1 or greater")
+	// The number is said to whoever exceeded it and nowhere else — an int32
+	// width in the help or the flag list is the program reading its arithmetic
+	// aloud at everyone, which is what #129 took out of the parser. Unreachable
+	// on a 32-bit build, where int is that width already and nothing can get
+	// past it to overflow; every published binary is 64-bit.
+	case c.Workers > math.MaxInt32:
+		return fmt.Errorf("workers must be %d or fewer", math.MaxInt32)
 	case c.Timeout < 0:
 		return fmt.Errorf("timeout must be 0 (indefinite) or greater")
 	case c.Report < 0, c.Report > 0 && c.Report < reportFloor:

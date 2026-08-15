@@ -108,6 +108,16 @@ func TestExitCodes(t *testing.T) {
 		},
 		// Unchanged by #48: `-w 0` fails the range check, `--bogus` the parser.
 		{name: "a configuration the command rejects", args: "-w 0", wantCode: 1, wantStderr: "workers must be 1 or greater"},
+		// #143: sync.WaitGroup counts in an int32, so this count wrapped its
+		// counter negative and the run died on `panic: sync: negative WaitGroup
+		// counter` — a stack trace, a startup line with no summary under it, and
+		// exit 2, which is a code this table does not carry. The 1 here is the
+		// row that says an out-of-range value is rejected and no work is done.
+		{
+			name: "a worker count no WaitGroup can hold", args: "-w 2147483648 -t 1ns", wantCode: 1,
+			wantNoLines: []string{"Starting CPU stress test"},
+			wantStderr:  "workers must be 2147483647 or fewer",
+		},
 		// The flag package names the flag single-dashed, whichever way it was spelled.
 		{name: "a flag the command does not have", args: "--bogus", wantCode: 1, wantStderr: "flag provided but not defined: -bogus"},
 		// #124: both answered above the operand check and exited 0 with the word

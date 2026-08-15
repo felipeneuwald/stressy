@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A rejected value is named once in the error, not twice.
 - `--help` states each default once instead of twice on the same line.
 - An out-of-range `--workers` no longer quotes 9223372036854775807 as the ceiling.
+- A `--workers` of 2147483648 or more is rejected with exit 1 instead of panicking.
 
 ## [0.5.0] - 2026-08-08
 

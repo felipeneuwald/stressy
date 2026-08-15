@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -40,8 +41,13 @@ func TestValidate(t *testing.T) {
 		{name: "report as long as the run", cfg: Cfg{Workers: 1, Timeout: time.Second, Report: time.Second}},
 		// An indefinite run outlives every interval, so none is too long for it.
 		{name: "a long report on an indefinite run", cfg: Cfg{Workers: 1, Timeout: 0, Report: time.Hour}},
+		// The ceiling is sync.WaitGroup's counter, so the last accepted value is
+		// the largest wg.Add can hold rather than a number anybody would run.
+		{name: "workers at the WaitGroup ceiling", cfg: Cfg{Workers: math.MaxInt32, Timeout: time.Second}},
 		{name: "zero workers", cfg: Cfg{Workers: 0, Timeout: 0}, wantErr: "workers must be 1 or greater"},
 		{name: "negative workers", cfg: Cfg{Workers: -1, Timeout: 0}, wantErr: "workers must be 1 or greater"},
+		// #143: wg.Add(2^31) wrapped negative and the run panicked out at exit 2.
+		{name: "workers one past the WaitGroup ceiling", cfg: Cfg{Workers: math.MaxInt32 + 1, Timeout: 0}, wantErr: "workers must be 2147483647 or fewer"},
 		{name: "negative timeout", cfg: Cfg{Workers: 1, Timeout: -time.Second}, wantErr: "timeout must be 0 (indefinite) or greater"},
 		{name: "negative report", cfg: Cfg{Workers: 1, Report: -time.Second}, wantErr: "report must be 0 (off) or 1s or greater"},
 		// #114: `-t 1s -r 1ns` put hundreds of thousands of lines on stdout.

@@ -50,8 +50,9 @@ stressy -t 30m -r 30s
 
 Every setting is a flag, and none of them is inferred. `-w` defaults to `1`, so
 a bare `stressy` loads one CPU on a laptop, in a container and in a pod alike;
-to load the whole machine, say so with `stressy -w $(nproc)`. stressy reads no
-environment variable, no config file and no positional argument, so a command
+to load the whole machine, say so — `stressy -w $(nproc)` on Linux and FreeBSD,
+`stressy -w $(sysctl -n hw.ncpu)` on macOS, which has no `nproc`. stressy reads
+no environment variable, no config file and no positional argument, so a command
 line is the whole of what a run was given.
 
 ### Output

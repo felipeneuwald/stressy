@@ -140,6 +140,9 @@ changelog:
       - '^test:'
       - '^ci:'
       - '^refactor:'
+      # The changelog-cut commit itself, which every release makes and no
+      # release wants in its own notes: v0.5.0's body ends `release: cut 0.5.0`.
+      - '^release:'
       - Merge pull request
       - Merge branch
 
@@ -158,3 +161,18 @@ release:
   prerelease: auto
   # No `extra_files:` for the licence: every archive above carries LICENSE, so a
   # loose copy beside them would be the same file published twice (#120).
+  #
+  # The commit list is a filtered `git log`, and what it filters is where the
+  # breaking changes live: 1.0.0's whole `### Removed` section arrived in four
+  # `refactor:` commits, none of which the notes can show. Rather than restate
+  # them here, where the next release would inherit 1.0.0's prose, point at the
+  # file that is right for every tag. `.Tag`, so the link is to the changelog as
+  # it was published rather than to whatever main says later.
+  footer: |
+
+    ---
+
+    The list above is filtered — `docs:`, `test:`, `ci:`, `refactor:` and
+    `release:` commits are left out — so it is a summary rather than the record.
+    Everything a user can observe, breaking changes included, is in
+    [CHANGELOG.md](https://github.com/felipeneuwald/stressy/blob/{{ .Tag }}/CHANGELOG.md).

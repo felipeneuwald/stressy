@@ -74,10 +74,11 @@ describes is a matter of reading both when you change either.
 ## Commits, branches and pull requests
 
 Branches are named `type/short-description`: `fix/`, `feat/`, `docs/`, `deps/`,
-`refactor/`, `ci/`, `release/`. Commit subjects use the same prefixes, in the
-imperative and in lower case — `fix: publish the windows/arm64 binary`. `docs:`,
-`test:`, `ci:` and `refactor:` are filtered out of the release notes, so use them
-for changes a user would not notice. One issue per pull request where you can.
+`refactor/`, `test/`, `ci/`, `release/`. Commit subjects use the same prefixes,
+in the imperative and in lower case — `fix: publish the windows/arm64 binary`.
+`docs:`, `test:`, `ci:`, `refactor:` and `release:` are filtered out of the
+release notes, so use them for changes a user would not notice. One issue per
+pull request where you can.
 
 ## The changelog
 
@@ -94,19 +95,32 @@ CI, comments, internal layout or documentation can see gets no entry at all.
 ## Releasing (for maintainers)
 
 1. Move the `[Unreleased]` entries under a new `## [X.Y.Z] - YYYY-MM-DD` heading,
-   and check that what it claims is what ships.
+   leaving `## [Unreleased]` itself in place above it, and check that what the
+   new heading claims is what ships. Then the link block at the foot of the
+   file: add `[X.Y.Z]: <compare>/v<previous>...vX.Y.Z` and repoint
+   `[Unreleased]` at `<compare>/vX.Y.Z...HEAD`. Skip that and the new heading
+   renders as plain text while `[Unreleased]` still compares from the tag
+   before it.
 2. Tag `vX.Y.Z` and push the tag. `.github/workflows/goreleaser.yml` gates on CI
    — every run of `ci.yml` that the tagged commit got from a push to `main` must
    have completed successfully, and there has to be one, so a tag on a branch
    that was never merged is refused — then builds the eight archives, both
-   images and the multi-arch manifest. If the gate stops a tag, fix what is red
-   and re-run the workflow.
+   images and the multi-arch manifest. If the gate stops a tag on a flake,
+   re-run that commit's `ci.yml` run and then this workflow. If it stops on
+   something needing a code change, merge the fix and cut the *next* tag: never
+   move a `v*` tag that has been pushed. proxy.golang.org has already fetched it
+   and sum.golang.org has already recorded its hash, so a moved tag gives
+   everyone `SECURITY ERROR: checksum mismatch`, permanently.
 3. To rehearse the publishing half, tag a `vX.Y.Z-rcN` pre-release first:
    `prerelease: auto` and the `{{ if not .Prerelease }}` guards keep it off
    `:latest` and off GitHub's "Latest release", and `git.ignore_tags` keeps it
    out of the range the final tag's notes are generated from — without that, a
    final tag landing after a rehearsal describes back to the rc and publishes
    only the commits since it, which is how v0.4.0's page ended up empty (#142).
+   An rc tag is as permanent as any other, so a failed rehearsal means `rcN+1`
+   rather than a re-cut `rcN`. Remove one with `gh release delete vX.Y.Z-rcN
+   --cleanup-tag`: the release and the tag go together, and deleting only the
+   tag leaves a published page whose every download 404s.
 
 ## Security
 

@@ -3,7 +3,7 @@
 [![CI](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml/badge.svg)](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/felipeneuwald/stressy/badges/coverage.json)](https://github.com/felipeneuwald/stressy/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/felipeneuwald/stressy)](https://github.com/felipeneuwald/stressy/releases/latest)
-[![Go version](https://img.shields.io/github/go-mod/go-version/felipeneuwald/stressy)](go.mod)
+[![Go version](https://img.shields.io/github/go-mod/go-version/felipeneuwald/stressy)](https://github.com/felipeneuwald/stressy/blob/main/go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A CPU stress tool. It loads as many CPUs as you ask it for with bcrypt hashing
@@ -51,7 +51,8 @@ stressy -t 30m -r 30s
 Every setting is a flag, and none of them is inferred. `-w` defaults to `1`, so
 a bare `stressy` loads one CPU on a laptop, in a container and in a pod alike;
 to load the whole machine, say so — `stressy -w $(nproc)` on Linux and FreeBSD,
-`stressy -w $(sysctl -n hw.ncpu)` on macOS, which has no `nproc`. stressy reads
+`stressy -w $(sysctl -n hw.ncpu)` on macOS, which has no `nproc`, and
+`stressy -w $env:NUMBER_OF_PROCESSORS` in PowerShell on Windows. stressy reads
 no environment variable, no config file and no positional argument, so a command
 line is the whole of what a run was given.
 
@@ -82,9 +83,13 @@ long it can get. A run does not stop until every worker has finished the bcrypt
 hash it is inside: one hash while the workers fit in the CPUs on offer, and
 roughly `--workers` divided by that many where they do not, because from there
 the hashes in flight finish in series. Measured on 18 cores, `-w 18` stopped
-about 0.2s after the signal and `-w 2000` took about twenty seconds. A second
-signal is not caught — it ends the process where it stands — so a drain you are
-not prepared to wait out is one more Ctrl-C, at the cost of the summary line.
+about 0.2s after the signal and `-w 2000` took about twenty seconds. Once the
+shutdown line has printed, a second signal is not caught — it ends the process
+where it stands — so a drain you are not prepared to wait out is one more
+Ctrl-C, at the cost of the summary line. That line is the gate, and the
+goroutine printing it is one the workers are starving: on the same 18 cores it
+followed the signal by 0.05s at `-w 18` and by 2.6s at `-w 1440`. A signal sent
+before it is absorbed.
 
 Because bcrypt at a fixed cost is constant work per hash, that rate is a crude
 cross-node benchmark: a node hashing 30% slower is a finding.
@@ -196,9 +201,9 @@ That `143` has a deadline on it, and it is the wait described [above](#output).
 A pod's default `terminationGracePeriodSeconds` is 30 and `docker stop`'s
 default grace is 10, against a wait that grows with `--workers`: a `-w` far
 above the CPU limit can outlast either, and the container is then SIGKILLed
-part-way through it — `137`, no summary line, and none of the `143` this section
-is built on. Matching `-w` to the limit, as the manifest does, keeps the wait to
-about one hash; a `-w` deliberately above it wants a
+part-way through it — `137`, no shutdown line and no summary, and none of the
+`143` this section is built on. Matching `-w` to the limit, as the manifest
+does, keeps the wait to about one hash; a `-w` deliberately above it wants a
 `terminationGracePeriodSeconds` long enough to cover the wait.
 
 ### Available Flags
@@ -236,11 +241,13 @@ go build
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the checks CI runs and the conventions.
+[CONTRIBUTING.md](https://github.com/felipeneuwald/stressy/blob/main/CONTRIBUTING.md)
+has the checks CI runs and the conventions.
 
 ## Security
 
-Please do not open a public issue for a vulnerability. [SECURITY.md](SECURITY.md)
+Please do not open a public issue for a vulnerability.
+[SECURITY.md](https://github.com/felipeneuwald/stressy/blob/main/SECURITY.md)
 says what is in scope and how to report privately.
 
 ## License

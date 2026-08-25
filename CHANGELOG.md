@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-25
+
 ### Changed
 
 - The shutdown line names the signal and says what the run is waiting for.
-- `-r, --report` has to be `1s` or longer, and no longer than `--timeout`.
+- From the shutdown line on, a signal ends the run at once: no summary, and never exit 0.
+- `-r, --report` has to be `1s` or longer, and on a bounded run no longer than `--timeout`.
 - The help output wraps at 80 columns instead of running past the margin.
 - A rejected command line prints the flags without the examples block.
 - `--workers` defaults to 1 again, not the number of CPUs available.
@@ -174,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic CPU stress testing functionality
 - Command-line interface for controlling stress parameters
 
-[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/felipeneuwald/stressy/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/felipeneuwald/stressy/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/felipeneuwald/stressy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/felipeneuwald/stressy/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/felipeneuwald/stressy/compare/v0.3.2...v0.3.3
